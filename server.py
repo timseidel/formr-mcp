@@ -15,6 +15,7 @@ from mcp.types import ToolAnnotations
 from formr_mcp.auth import AuthError, check_credentials
 from formr_mcp.client import FormrClient, FormrClientError
 from formr_mcp import documentation as doc
+from formr_mcp.analysis import analyze_run as run_analysis
 from formr_mcp.summarize import find_items, summarize_run_structure
 from formr_mcp.validation import get_unit_type_schemas, validate_structure
 
@@ -124,7 +125,8 @@ Available tools:
   get_documentation(topic) — learn survey design
   get_documentation_topics() — list available topics
   summarize_run(name, detail) — readable summary of run structure (detail: 'units' or 'items')
-  find_run_items(name, query?, item_type?) — search items across surveys by name/label/type""",
+  find_run_items(name, query?, item_type?) — search items across surveys by name/label/type
+  analyze_run(name) — check R syntax, variable refs, branch flow, item consistency, common mistakes""",
 )
 
 
@@ -341,6 +343,18 @@ def find_run_items(name: str, query: str | None = None, item_type: str | None = 
     """
     validate_run_name(name)
     return find_items(name, query=query, item_type=item_type)
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+def analyze_run(name: str, ctx: Context = None) -> str:
+    """Analyze a run structure for errors and warnings. Checks R syntax, variable references, branch flow, item consistency, and common mistakes.
+
+    Must call get_run_structure_to_file(name) first to fetch the structure.
+
+    Returns a structured report with error/warning counts. R syntax validation requires R to be installed.
+    """
+    validate_run_name(name)
+    return run_analysis(name)
 
 
 if __name__ == "__main__":
