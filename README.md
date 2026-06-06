@@ -27,8 +27,6 @@ uv run server.py
 | `FORMR_CLIENT_ID` | 32-char hex client ID from `/admin/account#api` |
 | `FORMR_CLIENT_SECRET` | 64-char hex secret from `/admin/account#api` |
 
-Required OAuth scopes: `survey:read`, `run:read`, `run:write`, `data:read`.
-
 ## MCP Client Configuration
 
 ### opencode
