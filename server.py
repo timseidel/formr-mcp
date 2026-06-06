@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncIterator
 
 from dotenv import load_dotenv
@@ -22,12 +23,20 @@ BASE_URL = os.getenv("FORMR_BASE_URL", "")
 CLIENT_ID = os.getenv("FORMR_CLIENT_ID", "")
 CLIENT_SECRET = os.getenv("FORMR_CLIENT_SECRET", "")
 
+WORKSPACE_DIR = Path(".formr")
+
 VALID_SETTINGS = {
     "title", "description", "footer_text", "public_blurb",
     "privacy", "tos", "header_image_path", "custom_css", "custom_js",
     "custom_r", "cron_active", "use_material_design", "expiresOn",
     "expire_cookie_value", "expire_cookie_unit", "public", "locked",
 }
+
+
+def run_filepath(name: str) -> Path:
+    path = WORKSPACE_DIR / f"{name}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def require(value: str, name: str) -> None:
@@ -72,34 +81,23 @@ compositions of units (Surveys, Pages, Emails, Branches, etc.) where
 execution flows by position number. Branching uses R expressions in
 `condition` and jumps to the `if_true` position.
 
-WORKFLOW — Always use file-based editing for run structures:
+WORKFLOW — Always use the file-based workflow for run structures:
 
-  Step 1 — Fetch:
-    get_run_structure_to_file("run-name", "/path/file.json")
-    Writes full structure to file + auto-backup to file.json.bak.
+  1. Fetch:  get_run_structure_to_file("run-name")
+     Writes .formr/run-name.json. If it already exists, the previous
+     version is backed up to .formr/run-name.json.bak.
 
-  Step 2 — Create a working copy:
-    Copy file.json → file.work.json (using cp or the file copy tool).
-    Edit file.work.json only. Never edit the original or .bak directly.
+  2. Edit:   Use Read/Edit tools on .formr/run-name.json directly.
+     Change positions, add/remove units, update survey items, etc.
 
-  Step 3 — Edit:
-    Use standard file Read/Edit tools on file.work.json.
-    Change positions, add/remove units, update survey items, etc.
-
-  Step 4 — Upload:
-    update_run_structure_from_file("run-name", "/path/file.work.json")
-    Validates, uploads, returns success or specific errors.
-
-  Step 5 — On validation errors:
-    Fix errors in file.work.json and retry Step 4.
-    If stuck, restore: copy file.json.bak → file.work.json.
-
-  Step 6 — On success:
-    Next time, start from Step 1 again (fresh fetch).
+  3. Upload: update_run_structure_from_file("run-name")
+     Reads .formr/run-name.json, validates, and uploads to formr.
+     On validation errors: fix the file and retry.
+     On success: the .bak file is removed; re-fetch when needed.
 
 Available tools:
-  get_run_structure_to_file(name, filepath) — fetch to file
-  update_run_structure_from_file(name, filepath) — upload from file
+  get_run_structure_to_file(name) — fetch run structure to .formr/<name>.json
+  update_run_structure_from_file(name) — upload from .formr/<name>.json
   update_run_settings(name, settings) — change run-level settings
   get_run(name) — run metadata (not structure)
   list_runs(name?) — list/filter runs
@@ -196,18 +194,19 @@ def _format_size(bytes: int) -> str:
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-async def get_run_structure_to_file(name: str, filepath: str, ctx: Context = None) -> str:
-    """Download the full run structure to a JSON file. Use this before editing.
+async def get_run_structure_to_file(name: str, ctx: Context = None) -> str:
+    """Download the full run structure to .formr/<name>.json. Use this before editing.
 
-    If `filepath` already exists, the previous version is backed up to `filepath.bak`.
+    If the file already exists, the previous version is backed up to .formr/<name>.json.bak.
     Returns a short summary — the full structure is on disk, not in the response.
     """
     require(name, "name")
-    require(filepath, "filepath")
     client = _client(ctx)
+    filepath = run_filepath(name)
+    bak_path = filepath.with_suffix(".json.bak")
 
-    if os.path.exists(filepath):
-        os.replace(filepath, filepath + ".bak")
+    if filepath.exists():
+        os.replace(str(filepath), str(bak_path))
 
     structure = await client.get_run_structure(name)
 
@@ -216,11 +215,9 @@ async def get_run_structure_to_file(name: str, filepath: str, ctx: Context = Non
 
     units = len(structure.get("units", []))
     size = os.path.getsize(filepath)
+    backup_note = f"\nBackup saved to {bak_path}" if bak_path.exists() else ""
 
-    return (
-        f"Run '{name}': wrote {units} units ({_format_size(size)}) to {filepath}\n"
-        f"Backup saved to {filepath}.bak"
-    )
+    return f"Run '{name}': wrote {units} units ({_format_size(size)}) to {filepath}{backup_note}"
 
 
 def _normalize_survey_choices(structure: dict) -> None:
@@ -240,14 +237,23 @@ def _normalize_survey_choices(structure: dict) -> None:
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False, openWorldHint=False))
-async def update_run_structure_from_file(name: str, filepath: str, ctx: Context = None) -> str:
-    """Read a run structure from a JSON file, validate, and upload to formr.
+async def update_run_structure_from_file(name: str, ctx: Context = None) -> str:
+    """Read a run structure from .formr/<name>.json, validate, and upload to formr.
 
     Returns a summary on success, or validation errors to fix and retry.
-    To inspect the uploaded result, call `get_run_structure_to_file` again.
+    On success, the backup file (.formr/<name>.json.bak) is removed.
+    To inspect the uploaded result, call get_run_structure_to_file again.
     """
     require(name, "name")
-    require(filepath, "filepath")
+    filepath = run_filepath(name)
+    bak_path = filepath.with_suffix(".json.bak")
+
+    if not filepath.exists():
+        raise FileNotFoundError(
+            f"No local file for run '{name}'. "
+            f"Call get_run_structure_to_file(\"{name}\") first."
+        )
+
     client = _client(ctx)
 
     with open(filepath) as f:
@@ -264,10 +270,10 @@ async def update_run_structure_from_file(name: str, filepath: str, ctx: Context 
     result = await client.get_run_structure(name)
     units = len(result.get("units", []))
 
-    return (
-        f"Run '{name}': successfully updated ({units} units).\n"
-        f"To re-inspect, run: get_run_structure_to_file(\"{name}\", \"{filepath}\")"
-    )
+    if bak_path.exists():
+        bak_path.unlink()
+
+    return f"Run '{name}': successfully updated ({units} units)."
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))

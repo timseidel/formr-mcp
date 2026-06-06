@@ -218,5 +218,8 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# JSON files used for training and testing
-*.jsonsession_transscript.md
+# formr MCP workspace (run structure files, backups)
+.formr/
+
+# Session transcripts
+session_transscript.md

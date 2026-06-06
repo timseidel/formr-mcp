@@ -6,11 +6,12 @@ This project is a formr MCP server. When working with it:
 
 Always use the file-based workflow. Do NOT pass large JSON structures through tool call arguments.
 
-1. `get_run_structure_to_file("run-name", "path/file.json")` — fetch
-2. Copy to a working file (e.g. `file.work.json`)
-3. Edit the working file with Read/Edit tools
-4. `update_run_structure_from_file("run-name", "path/file.work.json")` — upload
-5. On errors, fix and retry; if stuck, restore from `file.json.bak`
+1. `get_run_structure_to_file("run-name")` — fetches to `.formr/run-name.json`
+2. Edit `.formr/run-name.json` with Read/Edit tools
+3. `update_run_structure_from_file("run-name")` — validates and uploads
+
+On success, the backup (`.formr/run-name.json.bak`) is auto-removed.
+On validation error, fix the file and retry. If stuck, restore from `.bak`.
 
 ## Running the server locally
 
@@ -29,6 +30,7 @@ uv run --with pytest pytest tests/
 - Keep tools focused on file I/O, not inline JSON
 - No caching library needed — files are the cache
 - Return short summaries, never the full structure
+- Run structure files live in `.formr/` (auto-created, gitignored)
 
 ## Data Protection
 
