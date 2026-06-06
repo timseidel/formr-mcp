@@ -12,7 +12,7 @@ A [Model Context Protocol](https://modelcontextprotocol.io) server for the [form
 ## Quick Start
 
 ```bash
-git clone <repo-url> && cd formr-mcp
+git clone https://github.com/timseidel/formr-mcp && cd formr-mcp
 cp .env.example .env
 # Edit .env with your formr instance URL and API credentials
 uv sync
