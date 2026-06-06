@@ -1,0 +1,10 @@
+[project]
+name = "formr-mcp"
+version = "0.1.0"
+description = "A MCP Server for the formr.org survey framework"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=1.27.2",
+    "typer>=0.26.7",
+]
