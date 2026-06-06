@@ -1,12 +1,24 @@
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, quote
 
 import httpx
 
 from .auth import AuthError, OAuthToken, get_token
+
+VALID_NAME = re.compile(r"^[a-z][a-z0-9-]{2,254}$")
+
+
+def _validate_name(name: str) -> None:
+    if not VALID_NAME.match(name):
+        raise ValueError(
+            f"Invalid run name '{name}'. "
+            f"Name must start with a letter, contain only a-z, 0-9, hyphens, "
+            f"and be 3-255 characters long."
+        )
 
 
 class FormrClientError(Exception):
@@ -85,8 +97,9 @@ class FormrClient:
         return await self.request("GET", "api/v1/surveys", params=params)
 
     async def get_survey(self, name: str, format: str = "json") -> Any:
+        _validate_name(name)
         return await self.request(
-            "GET", f"api/v1/surveys/{name}", params={"format": format}
+            "GET", f"api/v1/surveys/{quote(name, safe='')}", params={"format": format}
         )
 
     async def get_runs(self, name: str | None = None) -> list[dict]:
@@ -94,24 +107,30 @@ class FormrClient:
         return await self.request("GET", "api/v1/runs", params=params)
 
     async def get_run(self, name: str) -> dict:
-        return await self.request("GET", f"api/v1/runs/{name}")
+        _validate_name(name)
+        return await self.request("GET", f"api/v1/runs/{quote(name, safe='')}")
 
     async def get_run_structure(self, name: str) -> dict:
-        return await self.request("GET", f"api/v1/runs/{name}/structure")
+        _validate_name(name)
+        return await self.request("GET", f"api/v1/runs/{quote(name, safe='')}/structure")
 
     async def put_run_structure(self, name: str, structure: dict) -> dict:
+        _validate_name(name)
         return await self.request(
-            "PUT", f"api/v1/runs/{name}/structure", json=structure
+            "PUT", f"api/v1/runs/{quote(name, safe='')}/structure", json=structure
         )
 
     async def create_run(self, name: str) -> dict:
-        return await self.request("POST", f"api/v1/runs/{name}")
+        _validate_name(name)
+        return await self.request("POST", f"api/v1/runs/{quote(name, safe='')}")
 
     async def patch_run(self, name: str, settings: dict) -> dict:
-        return await self.request("PATCH", f"api/v1/runs/{name}", json=settings)
+        _validate_name(name)
+        return await self.request("PATCH", f"api/v1/runs/{quote(name, safe='')}", json=settings)
 
     async def delete_run(self, name: str) -> None:
-        return await self.request("DELETE", f"api/v1/runs/{name}")
+        _validate_name(name)
+        return await self.request("DELETE", f"api/v1/runs/{quote(name, safe='')}")
 
     async def get_user_me(self) -> dict:
         return await self.request("GET", "api/v1/user/me")

@@ -293,6 +293,20 @@ Pass only the fields you want to change. Available settings:
 | `expire_cookie_unit` | string | Cookie lifetime unit: seconds, minutes, hours, days, months, years |
 | `public` | int | Visibility: 0=admin/test-users only, 2=accessible with link; 1 and 3 are rarely used |
 | `locked` | 0/1 | Lock run to prevent modifications |
+
+### Clearing settings
+
+When clearing a run setting field (e.g. `header_image_path`), passing `null` via
+`update_run_settings` may be silently ignored by the formr API. Use an empty
+string `""` instead:
+
+```
+# Does NOT clear the field:
+update_run_settings(name, {"header_image_path": null})
+
+# Correctly clears the field:
+update_run_settings(name, {"header_image_path": ""})
+```
 """
 
 
@@ -1203,9 +1217,13 @@ not installed, it needs to be added to the OpenCPU Dockerfile.
    `cron_active=1` in settings.
  5. **Overlapping position numbers** — duplicates cause undefined behavior.
     Always use unique positions.
- 6. **Page/Endpage as first unit** — the lowest position in a run must be a
-    content unit like `Survey` or `Privacy`. `Page` and `Endpage` end the
-    session and cannot serve as the entry point. If you need a landing page
-    for filtered-out participants, put a `Survey` first, then a `SkipForward`
-    to check eligibility, and let the `Endpage` follow as a fallthrough.
+6. **Page/Endpage as first unit** — the lowest position in a run must be a
+     content unit like `Survey` or `Privacy`. `Page` and `Endpage` end the
+     session and cannot serve as the entry point. If you need a landing page
+     for filtered-out participants, put a `Survey` first, then a `SkipForward`
+     to check eligibility, and let the `Endpage` follow as a fallthrough.
+ 7. **Using `null` to clear settings** — when clearing a run setting field (e.g.
+    `header_image_path`), passing `null` may be silently ignored by the formr
+    API. Use an empty string `""` instead: `update_run_settings(name,
+    {"header_image_path": ""})`.
 """

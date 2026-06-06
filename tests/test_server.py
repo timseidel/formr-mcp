@@ -10,7 +10,7 @@ import pytest
 sys.path.insert(0, "/Users/admin/Documents/repos/formr-mcp")
 
 import server as server_mod
-from server import VALID_SETTINGS, run_filepath, WORKSPACE_DIR, _normalize_survey_choices
+from server import VALID_SETTINGS, run_filepath, _normalize_survey_choices
 
 
 class TestValidSettings:
@@ -43,7 +43,8 @@ class TestSettingsValidation:
 class TestRunFilepath:
     def test_derives_path_from_name(self):
         path = run_filepath("my-run")
-        assert path == WORKSPACE_DIR / "my-run.json"
+        assert path.name == "my-run.json"
+        assert str(path).endswith(".formr/my-run.json")
 
     def test_creates_workspace_dir(self, tmp_path, monkeypatch):
         monkeypatch.setattr(server_mod, "WORKSPACE_DIR", tmp_path / "ws")
@@ -54,7 +55,19 @@ class TestRunFilepath:
     def test_bak_path(self):
         path = run_filepath("my-run")
         bak = path.with_suffix(".json.bak")
-        assert bak == WORKSPACE_DIR / "my-run.json.bak"
+        assert bak.name == "my-run.json.bak"
+
+    def test_rejects_path_traversal(self):
+        with pytest.raises(ValueError, match="Invalid run name"):
+            run_filepath("../../etc/passwd")
+
+    def test_rejects_short_name(self):
+        with pytest.raises(ValueError, match="Invalid run name"):
+            run_filepath("ab")
+
+    def test_rejects_uppercase(self):
+        with pytest.raises(ValueError, match="Invalid run name"):
+            run_filepath("My-Run")
 
 
 class TestGetRunStructureToFile:

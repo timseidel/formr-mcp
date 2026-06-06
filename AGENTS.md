@@ -25,6 +25,15 @@ uv run server.py
 uv run --with pytest pytest tests/
 ```
 
+## Read-only inspection tools
+
+These tools read from the local `.formr/<name>.json` file (call `get_run_structure_to_file` first):
+
+- `summarize_run(name, detail)` — human-readable overview. `detail="units"` for unit-level only, `detail="items"` (default) to include all survey items. Strips HTML from labels.
+- `find_run_items(name, query?, item_type?)` — search items by name/label substring and/or item type (e.g. `"mc"`, `"text"`, `"calculate"`).
+
+These avoid the need to write custom Python scripts for common queries like "what questions does this run ask?" or "where are the SCSKD items?".
+
 ## Code style
 
 - Keep tools focused on file I/O, not inline JSON

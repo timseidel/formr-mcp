@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
@@ -14,6 +15,7 @@ from mcp.types import ToolAnnotations
 from formr_mcp.auth import AuthError, check_credentials
 from formr_mcp.client import FormrClient, FormrClientError
 from formr_mcp import documentation as doc
+from formr_mcp.summarize import find_items, summarize_run_structure
 from formr_mcp.validation import get_unit_type_schemas, validate_structure
 
 dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
@@ -25,6 +27,8 @@ CLIENT_SECRET = os.getenv("FORMR_CLIENT_SECRET", "")
 
 WORKSPACE_DIR = Path(".formr")
 
+VALID_NAME = re.compile(r"^[a-z][a-z0-9-]{2,254}$")
+
 VALID_SETTINGS = {
     "title", "description", "footer_text", "public_blurb",
     "privacy", "tos", "header_image_path", "custom_css", "custom_js",
@@ -33,15 +37,28 @@ VALID_SETTINGS = {
 }
 
 
-def run_filepath(name: str) -> Path:
-    path = WORKSPACE_DIR / f"{name}.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
+def validate_run_name(name: str) -> None:
+    if not VALID_NAME.match(name):
+        raise ValueError(
+            f"Invalid run name '{name}'. "
+            f"Name must start with a letter, contain only a-z, 0-9, hyphens, "
+            f"and be 3-255 characters long."
+        )
+
+
+def safe_run_filepath(name: str) -> Path:
+    validate_run_name(name)
+    path = (WORKSPACE_DIR / f"{name}.json").resolve()
+    workspace_resolved = WORKSPACE_DIR.resolve()
+    if not str(path).startswith(str(workspace_resolved)):
+        raise ValueError("Path traversal detected: file path escapes workspace directory")
     return path
 
 
-def require(value: str, name: str) -> None:
-    if not value or not value.strip():
-        raise ValueError(f"'{name}' must not be empty")
+def run_filepath(name: str) -> Path:
+    path = safe_run_filepath(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 @asynccontextmanager
@@ -105,7 +122,9 @@ Available tools:
   delete_run(name, confirm) — delete a run and all data
   get_unit_types() — unit type schemas
   get_documentation(topic) — learn survey design
-  get_documentation_topics() — list available topics""",
+  get_documentation_topics() — list available topics
+  summarize_run(name, detail) — readable summary of run structure (detail: 'units' or 'items')
+  find_run_items(name, query?, item_type?) — search items across surveys by name/label/type""",
 )
 
 
@@ -122,6 +141,8 @@ async def whoami(ctx: Context = None) -> dict:
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def list_runs(name: str | None = None, ctx: Context = None) -> list[dict]:
     """List all runs. Optionally filter by exact name."""
+    if name is not None:
+        validate_run_name(name)
     return await _client(ctx).get_runs(name)
 
 
@@ -131,7 +152,7 @@ async def create_run(name: str, ctx: Context = None) -> dict:
 
     Returns the created run name and link on success. Requires `run:write` OAuth scope.
     """
-    require(name, "name")
+    validate_run_name(name)
     client = _client(ctx)
     return await client.create_run(name)
 
@@ -143,7 +164,7 @@ async def delete_run(name: str, confirm: bool = False, ctx: Context = None) -> s
     Safety: call without `confirm` first to get a warning,
     then call again with `confirm=True` once the user has approved.
     """
-    require(name, "name")
+    validate_run_name(name)
     if not confirm:
         return (
             f"⚠️  This will permanently delete run '{name}' and all collected data. "
@@ -156,7 +177,7 @@ async def delete_run(name: str, confirm: bool = False, ctx: Context = None) -> s
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def get_run(name: str, ctx: Context = None) -> dict:
     """Get a single run by exact name."""
-    require(name, "name")
+    validate_run_name(name)
     return await _client(ctx).get_run(name)
 
 
@@ -173,7 +194,7 @@ async def update_run_settings(name: str, settings: dict, ctx: Context = None) ->
 
     Returns the full updated run with all settings.
     """
-    require(name, "name")
+    validate_run_name(name)
     unknown = set(settings) - VALID_SETTINGS
     if unknown:
         raise ValueError(
@@ -200,7 +221,7 @@ async def get_run_structure_to_file(name: str, ctx: Context = None) -> str:
     If the file already exists, the previous version is backed up to .formr/<name>.json.bak.
     Returns a short summary — the full structure is on disk, not in the response.
     """
-    require(name, "name")
+    validate_run_name(name)
     client = _client(ctx)
     filepath = run_filepath(name)
     bak_path = filepath.with_suffix(".json.bak")
@@ -244,7 +265,7 @@ async def update_run_structure_from_file(name: str, ctx: Context = None) -> str:
     On success, the backup file (.formr/<name>.json.bak) is removed.
     To inspect the uploaded result, call get_run_structure_to_file again.
     """
-    require(name, "name")
+    validate_run_name(name)
     filepath = run_filepath(name)
     bak_path = filepath.with_suffix(".json.bak")
 
@@ -292,6 +313,34 @@ def get_documentation(topic: str, ctx: Context = None) -> str:
 def get_documentation_topics(ctx: Context = None) -> list[dict]:
     """List all available documentation topics."""
     return doc.get_topics()
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+def summarize_run(name: str, detail: str = "items", ctx: Context = None) -> str:
+    """Summarize a run structure from the local file. Returns a readable overview of units and their items.
+
+    Must call get_run_structure_to_file(name) first to fetch the structure.
+
+    Use detail='units' for just unit-level info (no items), or detail='items' (default) to include all survey items.
+    Strips HTML from labels for readability.
+    """
+    validate_run_name(name)
+    return summarize_run_structure(name, detail=detail)
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+def find_run_items(name: str, query: str | None = None, item_type: str | None = None, ctx: Context = None) -> str:
+    """Search for items across all surveys in a run. Returns matching items with survey context.
+
+    Must call get_run_structure_to_file(name) first to fetch the structure.
+
+    Filters:
+    - query: search item names and labels (case-insensitive substring match)
+    - item_type: filter by item type (e.g. 'mc', 'text', 'note', 'calculate')
+    At least one filter is recommended; both can be combined.
+    """
+    validate_run_name(name)
+    return find_items(name, query=query, item_type=item_type)
 
 
 if __name__ == "__main__":
