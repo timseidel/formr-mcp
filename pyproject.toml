@@ -5,6 +5,7 @@ description = "A MCP Server for the formr.org survey framework"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "httpx>=0.27.0",
     "mcp>=1.27.2",
-    "typer>=0.26.7",
+    "python-dotenv>=1.0.0",
 ]

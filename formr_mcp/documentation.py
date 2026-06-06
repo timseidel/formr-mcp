@@ -34,6 +34,11 @@ def _item_types():
 Items are the building blocks of a survey. In a run structure's `survey_data`,
 each item is a JSON object in the `items` array.
 
+**Choices quick reference:**
+- **Required** — items that show a list of options (radio, dropdown, checkbox group, slider, weekday picker, heading)
+- **Forbidden** — items that collect free-form input, binary checkboxes, dates, files, or computed values
+- **Optional** — `select_or_add_multiple` (can work with inline choices or without), `sex` (auto-set to Male/Female if absent)
+
 ## JSON vs Spreadsheet
 
 When authoring items as JSON (via `survey_data`), these differences apply:
@@ -68,30 +73,30 @@ When authoring items as JSON (via `survey_data`), these differences apply:
 
 ## Display / Layout
 
-| Type | Stores | Description |
-|------|--------|-------------|
-| `note` | no storage | Markdown info text, full width. Always optional. Never saved. |
-| `note_iframe` | no storage | Like `note` but renders R Markdown via iframe (OpenCPU knits the label). |
-| `block` | no storage | Blocks progress until condition met. Rendered as danger alert. |
-| `submit` | no storage | Submit/pagination button. `type_options` = auto-submit timeout (ms) or `auto`. |
+| Type | Stores | Choices | Description |
+|------|--------|---------|-------------|
+| `note` | no storage | Forbidden | Markdown info text, full width. Always optional. Never saved. |
+| `note_iframe` | no storage | Forbidden | Like `note` but renders R Markdown via iframe (OpenCPU knits the label). |
+| `block` | no storage | Forbidden | Blocks progress until condition met. Rendered as danger alert. |
+| `submit` | no storage | Forbidden | Submit/pagination button. `type_options` = auto-submit timeout (ms) or `auto`. |
 
 ## Simple Input
 
-| Type | MySQL type | type_options | Description |
-|------|-----------|--------------|-------------|
-| `text` | TEXT | maxlength or regex pattern | Single-line text. |
-| `textarea` | MEDIUMTEXT | maxlength or regex pattern | Multi-line text. |
-| `number` | INT UNSIGNED | `min,max,step` (default `0,10000000,1`) | Numeric input. Step `any` = decimals. |
-| `letters` | TEXT | maxlength | Letters only (A-Za-z + basic punctuation). |
-| `email` | VARCHAR(255) | — | Email with server-side validation. |
-| `url` | VARCHAR(255) | — | URL with validation. |
-| `tel` | VARCHAR(100) | — | Telephone (no validation pattern). |
-| `cc` | VARCHAR(255) | — | Credit card with Luhn validation. |
-| `blank` | TEXT | — | Only label text, no input field. Can still store a value. |
+| Type | MySQL type | Choices | type_options | Description |
+|------|-----------|---------|--------------|-------------|
+| `text` | TEXT | Forbidden | maxlength or regex pattern | Single-line text. |
+| `textarea` | MEDIUMTEXT | Forbidden | maxlength or regex pattern | Multi-line text. |
+| `number` | INT UNSIGNED | Forbidden | `min,max,step` (default `0,10000000,1`) | Numeric input. Step `any` = decimals. |
+| `letters` | TEXT | Forbidden | maxlength | Letters only (A-Za-z + basic punctuation). |
+| `email` | VARCHAR(255) | Forbidden | — | Email with server-side validation. |
+| `url` | VARCHAR(255) | Forbidden | — | URL with validation. |
+| `tel` | VARCHAR(100) | Forbidden | — | Telephone (no validation pattern). |
+| `cc` | VARCHAR(255) | Forbidden | — | Credit card with Luhn validation. |
+| `blank` | TEXT | Forbidden | — | Only label text, no input field. Can still store a value. |
 
 ## Date / Time
 
-All accept `min,max` in type_options (e.g. `2013-01-01,2014-01-01`, `-2years,now`).
+All accept `min,max` in type_options (e.g. `2013-01-01,2014-01-01`, `-2years,now`). Choices: **Forbidden**.
 
 | Type | MySQL | Format | Description |
 |------|-------|--------|-------------|
@@ -106,39 +111,39 @@ All accept `min,max` in type_options (e.g. `2013-01-01,2014-01-01`, `-2years,now
 
 ## Choice / Multiple Choice
 
-All choice types **require choices** (via `choice_list` column, inline `choice1..choiceN`, or auto-generated).
-
-| Type | MySQL | Widget | Description |
-|------|-------|--------|-------------|
-| `mc` | TINYINT UNSIGNED | Radio buttons | Choose one. Values stored as index number. |
-| `mc_button` | TINYINT UNSIGNED | Button group (single) | Like `mc` but rendered as large buttons. |
-| `mc_multiple` | VARCHAR(40) | Checkboxes | Choose many. Stored comma-separated. Always optional by default. |
-| `mc_multiple_button` | VARCHAR(40) | Button group (multi) | Like `mc_multiple` with toggle buttons. |
-| `mc_heading` | no storage | Column header | Displays choices as column headings. Not stored. |
-| `check` | TINYINT UNSIGNED | Single checkbox | Yes/no (0 or 1). Does NOT use choices. |
-| `check_button` | TINYINT UNSIGNED | Single toggle button | Like `check` but large toggle. |
-| `choose_two_weekdays` | VARCHAR(40) | Special checkboxes | Select exactly two weekdays. |
+| Type | MySQL | Widget | Choices | Description |
+|------|-------|--------|---------|-------------|
+| `mc` | TINYINT UNSIGNED | Radio buttons | **Required** | Choose one. Values stored as index number. |
+| `mc_button` | TINYINT UNSIGNED | Button group (single) | **Required** | Like `mc` but rendered as large buttons. |
+| `mc_multiple` | VARCHAR(40) | Checkboxes | **Required** | Choose many. Stored comma-separated. Always optional by default. |
+| `mc_multiple_button` | VARCHAR(40) | Button group (multi) | **Required** | Like `mc_multiple` with toggle buttons. |
+| `mc_heading` | no storage | Column header | **Required** | Displays choices as column headings. Not stored. |
+| `check` | TINYINT UNSIGNED | Single checkbox | Forbidden | Yes/no (0 or 1). Does NOT use choices. |
+| `check_button` | TINYINT UNSIGNED | Single toggle button | Forbidden | Like `check` but large toggle. |
+| `choose_two_weekdays` | VARCHAR(40) | Special checkboxes | **Required** | Select exactly two weekdays. Must provide 5 choices (Mon–Fri). |
 
 ## Dropdown / Select
 
-| Type | MySQL | Description |
-|------|-------|-------------|
-| `select_one` | TEXT | Dropdown, choose one. |
-| `select_multiple` | VARCHAR(40) | Multi-select dropdown. Values comma-separated. |
-| `select_or_add_one` | TEXT | Dropdown + custom option (Select2). `type_options`: `maxType` (max input length). |
-| `select_or_add_multiple` | TEXT | Multi-select + add custom. `type_options`: `maxType,maxChoose`. Newline-separated. |
-| `timezone` | VARCHAR(255) | All IANA timezones. Auto-detects browser timezone. |
+| Type | MySQL | Choices | Description |
+|------|-------|---------|-------------|
+| `select_one` | TEXT | **Required** | Dropdown, choose one. |
+| `select_multiple` | VARCHAR(40) | **Required** | Multi-select dropdown. Values comma-separated. |
+| `select_or_add_one` | TEXT | **Required** | Dropdown + custom option (Select2). `type_options`: `maxType` (max input length). |
+| `select_or_add_multiple` | TEXT | Optional | Multi-select + add custom. `type_options`: `maxType,maxChoose`. Newline-separated. |
+| `timezone` | VARCHAR(255) | Forbidden | All IANA timezones. Auto-detects browser timezone. |
 
 ## Slider / Scale
 
-| Type | MySQL | type_options | Description |
-|------|-------|--------------|-------------|
-| `range` | INT UNSIGNED | `min,max,step` (0,100,1) | Slider. `choice1` = left label, `choice2` = right label. Value hidden. |
-| `range_ticks` | INT UNSIGNED | `min,max,step` (0,100,1) | Slider with tick marks + tooltip. |
-| `rating_button` | SMALLINT | `min,max,step` (1,5,1) | Numbered buttons. `choice1` = left label, `choice2` = right label. Choices auto-generated from range. |
-| `sex` | TINYINT UNSIGNED | — | Male/female buttons. 1 = male, 2 = female. |
+| Type | MySQL | Choices | type_options | Description |
+|------|-------|---------|--------------|-------------|
+| `range` | INT UNSIGNED | **Required** | `min,max,step` (0,100,1) | Slider. `choice1` = left label, `choice2` = right label. Value hidden. |
+| `range_ticks` | INT UNSIGNED | **Required** | `min,max,step` (0,100,1) | Slider with tick marks + tooltip. |
+| `rating_button` | SMALLINT | **Required** | `min,max,step` (1,5,1) | Numbered buttons. `choice1` = left label, `choice2` = right label. Choices auto-generated from range. |
+| `sex` | TINYINT UNSIGNED | Optional | — | Male/female buttons. 1 = male, 2 = female. Choices auto-set if absent. |
 
 ## Hidden / Automatic (no user input)
+
+All choices: **Forbidden**.
 
 | Type | MySQL | type_options | Description |
 |------|-------|--------------|-------------|
@@ -153,7 +158,7 @@ All choice types **require choices** (via `choice_list` column, inline `choice1.
 
 ## File Upload
 
-All accept optional `type_options` = max file size in MB.
+All accept optional `type_options` = max file size in MB. Choices: **Forbidden**.
 
 | Type | Default accept | Description |
 |------|----------------|-------------|
@@ -164,6 +169,8 @@ All accept optional `type_options` = max file size in MB.
 
 ## Other
 
+Choices: **Forbidden**.
+
 | Type | MySQL | Description |
 |------|-------|-------------|
 | `geopoint` | TEXT | GPS coordinates via browser geolocation API. Read-only. |
@@ -171,12 +178,12 @@ All accept optional `type_options` = max file size in MB.
 
 ## PWA Family
 
-| Type | MySQL | Description |
-|------|-------|-------------|
-| `request_phone` | VARCHAR(20) | Detects mobile vs desktop. Shows QR code for phone transition. |
-| `add_to_home_screen` | VARCHAR(20) | Button to add PWA to home screen. |
-| `push_notification` | TEXT | Button to request push permission. Stores subscription JSON. |
-| `request_cookie` | VARCHAR(20) | Button for functional cookie consent. |
+| Type | MySQL | Choices | Description |
+|------|-------|---------|-------------|
+| `request_phone` | VARCHAR(20) | Forbidden | Detects mobile vs desktop. Shows QR code for phone transition. |
+| `add_to_home_screen` | VARCHAR(20) | **Required** | Button to add PWA to home screen. |
+| `push_notification` | TEXT | **Required** | Button to request push permission. Stores subscription JSON. |
+| `request_cookie` | VARCHAR(20) | **Required** | Button for functional cookie consent. |
 
 ## Type Options (spreadsheet → JSON mapping)
 

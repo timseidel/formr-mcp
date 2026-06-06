@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "formr-mcp": {
+      "type": "local",
+      "command": ["uv", "run", "server.py"],
+      "enabled": true
+    }
+  }
+}

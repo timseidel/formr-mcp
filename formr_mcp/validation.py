@@ -16,6 +16,34 @@ KNOWN_TYPES = {
 
 BRANCH_TYPES = {"Branch", "SkipForward", "SkipBackward"}
 
+# Items that MUST define choices (mirrors PHP $hasChoices = true, no auto-generation)
+CHOICES_REQUIRED = {
+    "mc", "mc_button", "mc_multiple", "mc_multiple_button", "mc_heading",
+    "choose_two_weekdays",
+    "select_one", "select_multiple", "select_or_add_one",
+    "range", "range_ticks", "rating_button",
+    "add_to_home_screen", "push_notification", "request_cookie",
+}
+
+# Items that MUST NOT have choices (mirrors PHP $hasChoices = false)
+CHOICES_FORBIDDEN = {
+    "check", "check_button",
+    "submit", "note", "note_iframe", "block",
+    "text", "textarea", "number", "letters", "email", "url", "tel", "cc", "blank",
+    "date", "datetime", "datetime-local", "time", "month", "week", "year", "yearmonth",
+    "color", "geopoint",
+    "file", "image", "audio", "video",
+    "calculate", "hidden", "get", "server", "browser", "ip", "referrer", "random",
+    "request_phone", "timezone",
+}
+
+# Items where choices are allowed but not required
+# (PHP $hasChoices = true but has a validation exception or auto-generates)
+CHOICES_OPTIONAL = {
+    "select_or_add_multiple",
+    "sex",
+}
+
 KNOWN_ITEM_TYPES = {
     "note", "note_iframe", "block", "submit",
     "text", "textarea", "number", "letters", "email", "url", "tel", "cc", "blank",
@@ -197,10 +225,24 @@ def validate_survey_data(survey_data: object, unit_label: str) -> list[str]:
                 f"{unit_label}: item '{item_name or j}': 'item_order' must be an integer"
             )
 
+        choice_list = item.get("choice_list")
         choices = item.get("choices")
+        has_choices = bool(choices) or bool(choice_list)
+
         if choices is not None and not isinstance(choices, (dict, list)):
             errors.append(
                 f"{unit_label}: item '{item_name or j}': 'choices' must be an object or array"
+            )
+
+        if item_type in CHOICES_REQUIRED and not has_choices:
+            errors.append(
+                f"{unit_label}: item '{item_name or j}' (type '{item_type}'): "
+                f"requires 'choices' or 'choice_list' — this item type must have choices defined"
+            )
+        elif item_type in CHOICES_FORBIDDEN and choices:
+            errors.append(
+                f"{unit_label}: item '{item_name or j}' (type '{item_type}'): "
+                f"must not have 'choices' — this item type does not support choices"
             )
 
         type_options = item.get("type_options")

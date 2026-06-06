@@ -76,18 +76,14 @@ async def get_token(
                 "Authentication failed (400 Bad Request). "
                 "The formr server rejected the credentials. "
                 "Check that your FORMR_CLIENT_ID and FORMR_CLIENT_SECRET are correct "
-                "and were generated at <base_url>/admin/account#api.\n"
-                "Current values:\n"
-                f"  FORMR_BASE_URL={base_url}\n"
-                f"  FORMR_CLIENT_ID={client_id[:8]}...\n"
-                f"  FORMR_CLIENT_SECRET={client_secret[:8]}..."
+                "and were generated at <base_url>/admin/account#api."
             )
         if resp.status_code == 401:
             raise AuthError(
                 "Authentication failed (401 Unauthorized). "
                 "Your FORMR_CLIENT_ID and FORMR_CLIENT_SECRET were rejected. "
                 "Verify they are correct and have the required scopes "
-                "(survey:read, run:read, data:read)."
+                "(survey:read, run:read, run:write, data:read)."
             )
         resp.raise_for_status()
         body = resp.json()
