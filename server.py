@@ -16,6 +16,13 @@ from formr_mcp.auth import AuthError, check_credentials
 from formr_mcp.client import FormrClient, FormrClientError
 from formr_mcp import documentation as doc
 from formr_mcp.analysis import analyze_run as run_analysis
+from formr_mcp.editing import (
+    add_run_unit as editing_add_run_unit,
+    duplicate_run_units as editing_duplicate_run_units,
+    generate_survey_items as editing_generate_survey_items,
+    remove_run_unit as editing_remove_run_unit,
+    shift_run_positions as editing_shift_run_positions,
+)
 from formr_mcp.summarize import find_items, summarize_run_structure
 from formr_mcp.validation import get_unit_type_schemas, validate_structure
 
@@ -126,7 +133,12 @@ Available tools:
   get_documentation_topics() — list available topics
   summarize_run(name, detail) — readable summary of run structure (detail: 'units' or 'items')
   find_run_items(name, query?, item_type?) — search items across surveys by name/label/type
-  analyze_run(name) — check R syntax, variable refs, branch flow, item consistency, common mistakes""",
+  analyze_run(name) — check R syntax, variable refs, branch flow, item consistency, common mistakes
+  add_run_unit(name, unit_type, position, **kwargs) — add a unit to the local file
+  remove_run_unit(name, position, compact?) — remove a unit from the local file
+  duplicate_run_units(name, from_positions, to_start_position) — copy units to new positions
+  shift_run_positions(name, from_position, delta) — shift units to make room or close gaps
+  generate_survey_items(description, survey_name?, language?) — generate items JSON from a description""",
 )
 
 
@@ -355,6 +367,95 @@ def analyze_run(name: str, ctx: Context = None) -> str:
     """
     validate_run_name(name)
     return run_analysis(name)
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False, openWorldHint=False))
+def add_run_unit(name: str, unit_type: str, position: int, description: str = "",
+                insert_mode: str = "shift", ctx: Context = None, **kwargs) -> str:
+    """Add a unit to a local run structure file. The file must exist (fetch with get_run_structure_to_file first).
+
+    Unit types: Survey, Page, Email, Branch, SkipForward, SkipBackward, External, Pause, Wait, Shuffle, PushMessage, Privacy, Endpage.
+
+    Common kwargs by unit type:
+    - SkipForward/SkipBackward: condition (R expr), if_true (int position), automatically_jump (0/1), automatically_go_on (0/1)
+    - Email: subject, body, account_id (int), recipient_field, cron_only (0/1)
+    - Pause/Wait: wait_minutes, wait_until_time ("HH:MM:SS"), wait_until_date ("YYYY-MM-DD"), relative_to (R expr), body
+    - Wait: body is an integer position for click-through (NOT display content)
+    - Survey: study_id (int) or survey_data (dict with name, items, settings)
+    - Endpage/Page: body (markdown/knitr content)
+    - External: address (URL or R code), api_end (0/1)
+
+    insert_mode: 'shift' (default) shifts existing units at >= position up by 10. 'overwrite' replaces any existing unit at that position.
+    """
+    validate_run_name(name)
+    return editing_add_run_unit(name, unit_type, position, description=description,
+                               insert_mode=insert_mode, **kwargs)
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=True, idempotentHint=False, openWorldHint=False))
+def remove_run_unit(name: str, position: int, compact: bool = False, ctx: Context = None) -> str:
+    """Remove a unit at the given position from the local run structure file.
+
+    The file must exist (fetch with get_run_structure_to_file first).
+    After removing, call update_run_structure_from_file to upload.
+
+    If compact is True, shifts all units at higher positions down by 1 to fill the gap.
+    Warning: this does NOT update branch if_true targets — update those manually.
+    """
+    validate_run_name(name)
+    return editing_remove_run_unit(name, position, compact=compact)
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False, openWorldHint=False))
+def duplicate_run_units(name: str, from_positions: list[int], to_start_position: int,
+                        shift_existing: bool = True, ctx: Context = None) -> str:
+    """Copy units at from_positions to new positions starting at to_start_position in the local run structure file.
+
+    Copies units in their original order, assigning new positions starting at
+    to_start_position with gaps of 10 (e.g., 100, 110, 120...).
+
+    If shift_existing is True (default), any existing units at conflicting positions
+    are shifted up to make room. Set shift_existing=False to error on conflicts instead.
+
+    The file must exist (fetch with get_run_structure_to_file first).
+    """
+    validate_run_name(name)
+    return editing_duplicate_run_units(name, from_positions, to_start_position,
+                                       shift_existing=shift_existing)
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False, openWorldHint=False))
+def shift_run_positions(name: str, from_position: int, delta: int, ctx: Context = None) -> str:
+    """Shift all units at positions >= from_position by delta in the local run structure file.
+
+    Positive delta shifts positions up (making room for new units).
+    Negative delta shifts positions down (closing gaps after removal).
+
+    WARNING: This does NOT update branch if_true targets. You must update those
+    manually after shifting positions.
+
+    The file must exist (fetch with get_run_structure_to_file first).
+    """
+    validate_run_name(name)
+    return editing_shift_run_positions(name, from_position, delta)
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+def generate_survey_items(description: str, survey_name: str = "survey",
+                           language: str = "en", ctx: Context = None) -> str:
+    """Generate a survey items JSON array based on a description. Returns JSON
+    text you can paste into your run structure. Does NOT modify any file.
+
+    The description should specify what items you want, e.g.:
+    "BFI-15 personality questionnaire in German with 5-point Likert scale"
+    "ESM survey with activity, location, interaction partners, and 3 affect items"
+    "Screening questionnaire for age, language, country, email, smartphone access"
+
+    The LLM will generate well-formed item JSON with correct item_order,
+    choices, choice_list, type_options, etc.
+    """
+    return editing_generate_survey_items(description, survey_name=survey_name,
+                                          language=language)
 
 
 if __name__ == "__main__":
