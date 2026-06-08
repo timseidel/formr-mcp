@@ -79,6 +79,7 @@ When adding features, trace the data flow end-to-end:
 2. **Implementation** (`formr_mcp/` modules): The Python function that does the work. Must read/write the `.formr/` JSON files.
 3. **Tests** (`tests/test_*.py`): Create a minimal run structure fixture, write to `.formr/<name>.json`, call the function, assert on the result file.
 4. **Documentation** (`formr_mcp/documentation.py`): If the feature changes how users should design runs, update the relevant topic.
+5. **formr source code**: Always consult the formr.org web app source (https://github.com/rubenarslan/formr) and the R package source (https://github.com/rubenarslan/formr/) to understand the software's design decisions. The formr codebase is the ground truth for how units, skip logic, Wait/Pause semantics, and session tables actually behave — documentation alone is incomplete.
 
 When adding a new tool, register it in all four places. The test pattern is: create a temp directory, monkey-patch `WORKSPACE_DIR`, write a fixture JSON, call the function, read back and assert.
 
