@@ -313,12 +313,16 @@ def duplicate_run_units(name: str, from_positions: list[int], to_start_position:
                 )
 
     # Create new units
+    src_desc_prefix = ""
     for src, new_pos in zip(source_units, new_positions):
         new_unit = copy.deepcopy(src)
         new_unit["position"] = new_pos
-        # Update description to avoid confusion
+        # Add "copy" prefix to description to distinguish from originals
+        # But don't stack "copy:" prefixes on re-duplication
         if "description" in new_unit and new_unit["description"]:
-            new_unit["description"] = f"copy: {new_unit['description']}"
+            desc = new_unit["description"]
+            if not desc.startswith("copy: "):
+                new_unit["description"] = f"copy: {desc}"
         units.append(new_unit)
 
     units.sort(key=lambda u: u.get("position", 0))
