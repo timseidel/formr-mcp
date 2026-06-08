@@ -112,6 +112,40 @@ def _extract_r_expressions(structure: dict) -> list[dict]:
                         "type": "knitr_chunk",
                     })
 
+        if utype == "Email":
+            body = unit.get("body", "")
+            if body:
+                for m in _INLINE_R_RE.finditer(body):
+                    sources.append({
+                        "expr": m.group(1),
+                        "location": f"Email body at position {pos} (inline R)",
+                        "type": "knitr_inline",
+                    })
+            subject = unit.get("subject", "")
+            if subject:
+                for m in _INLINE_R_RE.finditer(subject):
+                    sources.append({
+                        "expr": m.group(1),
+                        "location": f"Email subject at position {pos} (inline R)",
+                        "type": "knitr_inline",
+                    })
+
+        if utype == "Pause":
+            body = unit.get("body", "")
+            if body:
+                for m in _INLINE_R_RE.finditer(body):
+                    sources.append({
+                        "expr": m.group(1),
+                        "location": f"Pause body at position {pos} (inline R)",
+                        "type": "knitr_inline",
+                    })
+                for m in _R_CHUNK_RE.finditer(body):
+                    sources.append({
+                        "expr": m.group(1),
+                        "location": f"Pause body at position {pos} (R chunk)",
+                        "type": "knitr_chunk",
+                    })
+
         if utype == "Survey":
             sd = unit.get("survey_data")
             if not isinstance(sd, dict):
@@ -328,6 +362,57 @@ def _check_branch_flow(structure: dict) -> list[dict]:
         for s in successors.get(p, set()):
             if s not in reachable:
                 stack.append(s)
+
+    # Check for Page/Endpage units that block the flow
+    sorted_positions = sorted(all_positions)
+    for p in sorted_positions:
+        unit = positions[p]
+        utype = unit.get("type", "")
+        if utype in ("Page", "Endpage"):
+            # Find the next position after this Page/Endpage
+            next_positions = [sp for sp in sorted_positions if sp > p]
+            if next_positions:
+                next_pos = next_positions[0]
+                next_unit = positions[next_pos]
+                next_desc = next_unit.get("description", "")
+                # Check if any branch explicitly targets this Page/Endpage
+                targeted_by_branch = any(t == p for _, t, _ in branch_targets)
+                # Check if any branch targets a position beyond the Page/Endpage
+                # that requires passing through it
+                findings.append({
+                    "severity": "warning",
+                    "message": f"{utype} at position {p} permanently ends the run session. "
+                               f"Unit at position {next_pos} "
+                               f"('{next_desc or next_unit.get('type', '')}') "
+                               f"is sequenced after it and will be unreachable "
+                               f"unless a branch explicitly skips past position {p}.",
+                    "location": f"Position {p} ({utype})",
+                })
+
+    # Check Wait body values (should be integer positions, not display content)
+    for p, unit in positions.items():
+        utype = unit.get("type", "")
+        if utype == "Wait":
+            body = unit.get("body")
+            if body is not None:
+                try:
+                    body_int = int(body)
+                    if body_int not in all_positions:
+                        findings.append({
+                            "severity": "warning",
+                            "message": f"Wait body value '{body}' at position {p} is not a valid position "
+                                       f"in this run. Valid positions: {sorted(all_positions)}. "
+                                       f"Wait body is the position to jump to on click, not display content.",
+                            "location": f"Wait body at position {p}",
+                        })
+                except (ValueError, TypeError):
+                    findings.append({
+                        "severity": "error",
+                        "message": f"Wait body should be an integer position number, not '{body}'. "
+                                   f"Wait body is the position to jump to when the participant clicks through, "
+                                   f"NOT display content. Use Pause units for display text.",
+                        "location": f"Wait body at position {p}",
+                    })
 
     for p, unit in positions.items():
         utype = unit.get("type", "")

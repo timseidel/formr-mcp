@@ -210,9 +210,9 @@ choices sheet — the `choices` field on any item serves as the definition.
 
 # ── Run concepts ────────────────────────────────────────────────────
 
-@_topic("run-concepts", "How runs work — flow, positions, branching")
+@_topic("run-concepts", "How runs work — flow, positions, branching, timing")
 def _run_concepts():
-    return """# Run Concepts
+    return r"""# Run Concepts
 
 ## What is a run?
 
@@ -224,14 +224,22 @@ The participant moves from one position to the next unless a branch redirects th
 
 - **Units are ordered by `position`** — an integer field. Lower positions execute first.
 - **Sequential flow by default** — when a unit completes, the participant moves to the next higher position.
-- **Pages are endpoints** — `Page` and `Endpage` units end the session (no auto-progress).
-- **Runs start with content** — the first unit (lowest position) must never be a `Page` or `Endpage`. Use a `Survey` or `Privacy` unit as the entry point. `Page` and `Endpage` only appear after branching (e.g., after a `SkipForward` filter) to end the run or stop ineligible participants.
+
+> **⚠️ CRITICAL: Page and Endpage units permanently end the run session.**
+> `Page` and `Endpage` set `end_session = true` and `end_run_session = true`.
+> This means the participant **cannot advance past them** — there is no "continue"
+> button. **Every unit after a Page/Endpage that isn't reached via a branch
+> is unreachable.** If you need a Pause that participants can wait at and then
+> continue, use `Pause` (not `Page`). If you need informational text followed by
+> more units, put it in a `Survey` note item or a `Pause` body — never a `Page`.
+
 - **Branches redirect** — `Branch`, `SkipForward`, and `SkipBackward` use an R `condition` expression.
   If `TRUE`, the participant jumps to the `if_true` position.
 - **Surveys collect data** — a `Survey` unit links to a survey definition (either existing `study_id` or inline `survey_data`).
 - **Emails are sent automatically** — `Email` units fire when reached (or on cron for `cron_only=1`).
-- **Pauses wait** — `Pause`/`Wait` units stall progress until a time, date, or duration passes.
-- **External redirects** — `External` units send participants to a URL or evaluate an R expression.
+- **Pauses wait** — `Pause` units stall progress until a time, date, or duration passes. No user interaction; the page displays the `body` content.
+- **Waits are interactive pauses** — `Wait` units also stall progress, but participants can click through to advance early. The `body` field stores the **position number** to jump to on click.
+- **External units execute R or redirect** — `External` units either redirect to a URL, or **execute full R code** (via OpenCPU) when the `address` field doesn't start with `http`. This enables SMS gateway calls, phone number transformation, and other dynamic logic.
 
 ## Position spacing
 
@@ -243,13 +251,126 @@ Positions are integers. Duplicate positions are not allowed.
 ```
 position 10: Survey "demographics"
     ↓ (auto-advance after submit)
-position 20: Branch "age check"
+position 20: SkipForward "age check"
     ├─ condition: age < 18 → if_true: 40 (skip to end)
     ↓ (condition FALSE)
 position 30: Survey "main study"
     ↓
-position 40: Page "end"
+position 40: Endpage "thank you"
 ```
+
+## Wait units — the key to ESM/diary designs
+
+`Wait` extends `Pause` with **interactive advancement**: participants can click through
+before the timer expires. This is essential for experience sampling and diary studies
+where participants should be able to start a survey when they receive a notification.
+
+### How Wait.body works
+
+The `body` field on a `Wait` unit is **not** display content — it is the **integer position**
+the participant jumps to when they click through. This enables the "advance-on-click" pattern:
+
+```
+Wait (body: survey_position, wait_minutes: 90)
+  → Participant clicks within 90 min → jumps to survey_position
+  → 90 min passes → timer expires → advance to next unit (e.g., reminder)
+```
+
+### ESM beep pattern
+
+The standard ESM pattern uses SkipForward + Wait + Email + Survey for each beep:
+
+```
+position 10: SkipForward (if hour >= 12 → jump to beep 2)
+position 20: Wait (body: 60, wait_minutes: 90) — advance to survey on click
+position 30: Email (cron_only: 1) — reminder, only sent by cron
+position 40: Survey "esm"
+position 50: SkipBackward or continue to next beep
+```
+
+- **SkipForward** skips the beep if the time window has passed (e.g., `hour(now()) >= 12`)
+- **Wait** lets participants click through to the survey within the time window
+- **Email** (with `cron_only: 1`) sends the reminder only via cron, not on participant visit
+- After the ESM survey, logic loops back or advances to the next beep
+
+## Pause/Wait timing with relative_to
+
+The `relative_to` field on Pause/Wait units is an **R expression** that determines
+the base timestamp. The unit expires at `base_timestamp + wait_minutes`.
+
+- If `relative_to` is empty and `wait_minutes` is set, the default is
+  `tail(survey_unit_sessions$created, 1)` — the timestamp of the most recent unit session.
+- If `relative_to` returns a **POSIXct timestamp**, the pause expires at
+  `timestamp + wait_minutes * 60`.
+- If `relative_to` returns **TRUE**, the pause expires immediately.
+- If `relative_to` returns **FALSE**, the pause never expires (waits indefinitely).
+- `wait_until_time` and `wait_until_date` are additional constraints — the pause
+  won't expire until the specified time-of-day and/or date are also met.
+
+### Common relative_to expressions
+
+```r
+# Wait until next day 9 AM:
+time_passed(hours = 12) && hour(now()) >= 9
+
+# Wait until 9 AM on the day after the baseline survey:
+library(lubridate)
+time_passed(hours = 1) && hour(now()) >= 9 &&
+  date(now()) > as.Date(baseline$created)
+
+# Pause for 3 hours from when SMS was sent:
+tail(survey_unit_sessions$created, 1)
+
+# Check if it's within a time window (for SkipForward conditions):
+hour(now()) >= 9 && hour(now()) < 12
+```
+
+## System variables available in R expressions
+
+### survey_unit_sessions
+
+A data frame tracking every unit visit for the current participant. Key columns:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | int | Unit session ID |
+| `unit_id` | int | Which unit definition |
+| `run_session_id` | int | Which participant run session |
+| `created` | datetime | When this unit session was created |
+| `ended` | datetime | When ended (NULL = still active) |
+| `result` | varchar | Human-readable result (e.g., 'survey_started', 'pause_ended') |
+
+Common patterns:
+```r
+# When was the SMS last sent? (position of the External unit)
+tail(survey_unit_sessions[survey_unit_sessions$position == 55, ]$created, 1)
+
+# Has the participant visited any ESM survey yet?
+nrow(esm) > 0
+
+# How long since last ESM completion?
+as.numeric(difftime(now(), tail(esm$created, 1), units = "hours")) > 24
+```
+
+### survey_run_sessions
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `session` | varchar(64) | Unique session code (the participant's login code) |
+| `created` | datetime | When the run session was created |
+| `ended` | datetime | When ended (NULL = still active) |
+| `position` | smallint | Current position in the run |
+
+Use `survey_run_sessions$session` to construct personalized links for other runs
+(e.g., acquaintance surveys).
+
+### .formr special variables
+
+These are available in R code evaluated by OpenCPU:
+- `.formr$login_code` — the participant's session code (= their login link code)
+- `.formr$last_action_time` — timestamp of the participant's last action
+- `.formr$nr_of_participants` — total number of participants in the run
+- `.formr$secret_<name>` — run secrets (only injected if referenced in code)
 
 ## Common patterns
 
@@ -264,10 +385,28 @@ If not enough, jump back to position 20 (pause until next reminder).
 ### Longitudinal study
 Survey (wave 1) → Pause (1 year) → Email (invitation) → Survey (wave 2) → Endpage.
 
-### Reminder system
-Wait unit (60 min) → Email (reminder). The Wait's `body` holds the position to redirect
-to if the participant advances manually. The Email uses `cron_only=1` so only the cron
-daemon sends it (not on first visit).
+### Reminder system (Wait + Email)
+```
+Wait (body: 30, wait_minutes: 60)
+  → participant clicks → jumps to position 30 (survey)
+  → 60 min timer expires → advances to position 20 (email)
+Email (cron_only: 1)  → sends reminder only via cron
+```
+The Wait's `body = 30` means "if the participant arrives, redirect them to position 30."
+The Email's `cron_only = 1` means "only send this via cron, not when the participant visits."
+
+### 24-hour dropout detection
+```r
+# In a SkipForward condition — skip to exclusion if inactive for 24+ hours
+nrow(esm) > 0 && as.numeric(difftime(now(), tail(esm$created, 1), units = "hours")) > 24
+```
+
+### Reminder deduplication
+```r
+# In a SkipForward condition — skip reminder if one was already sent today
+length(survey_unit_sessions[survey_unit_sessions$position == 60, ]$created) > 0 &&
+  date(tail(survey_unit_sessions[survey_unit_sessions$position == 60, ]$created, 1)) == today()
+```
 
 ## Settings
 
@@ -312,9 +451,9 @@ update_run_settings(name, {"header_image_path": ""})
 
 # ── R code ──────────────────────────────────────────────────────────
 
-@_topic("r-code", "R code in formr — conditions, values, knitr")
+@_topic("r-code", "R code in formr — conditions, values, knitr, timing, secrets")
 def _r_code():
-    return """# R Code in formr
+    return r"""# R Code in formr
 
 formr evaluates R code via **OpenCPU** for dynamic content. R is used in:
 
@@ -323,11 +462,11 @@ formr evaluates R code via **OpenCPU** for dynamic content. R is used in:
 The `condition` field on Branch/SkipForward/SkipBackward units is an R expression
 that must evaluate to `TRUE` (jump) or `FALSE` (continue):
 
-```
+```r
 nrow(diary) < 20
 ```
 
-```
+```r
 age >= 18
 ```
 
@@ -349,52 +488,73 @@ always executes its `value` as R:
 The `showif` column controls item visibility. It's an R expression that must
 evaluate to `TRUE` (show) or `FALSE` (hide):
 
-```
+```r
 age >= 18
 ```
 
-```
+```r
 nrow(friend_rate) < friend_list$nr_friends
 ```
 
 Use `//js_only` prefix for JavaScript-only conditions (no server round-trip):
-```
+```r
 //js_only
 nr_friends >= 1
 ```
 
 ## 4. Labels and body content (knitr)
 
-Labels, page bodies, and email bodies support R **knitr** inline code.
+Labels, Pause/Endpage bodies, and email bodies support R **knitr** inline code.
 Wrap R code in:
 
-- Inline: `` `r expr` `` — e.g. `` Please rate _`r name`_. ``
+- Inline: `` `r expr` `` — e.g. `` `r ifelse(sex == 1, "Lieber Teilnehmer", "Liebe Teilnehmerin")` ``
 - Block: ```` ```{r} code ``` ```` — e.g. for plots, tables, datatables
 
-Example with ggplot:
-``````
-```{r}
-library(ggplot2)
-qplot(age, height, data = demographics)
+formr renders knitr content by sending it to OpenCPU with a settings prefix:
+```r
+```{r settings, include=FALSE}
+library(knitr); library(formr)
+opts_chunk$set(warning=FALSE, message=FALSE, error=FALSE, echo=FALSE)
 ```
-``````
-
-Example with DT datatable:
-``````
-```{r}
-library(DT)
-datatable(friends, options = list(pageLength = 5))
 ```
-``````
 
-## 5. Pause/Wait timing
+This means `library(formr)` is always available in knitr rendering.
 
-The `relative_to` field on Pause/Wait units can be an R expression returning
-a timestamp:
+### Knitr in email bodies
 
-```
+Email bodies also support knitr. formr renders them as self-contained HTML emails
+with `fig.retina=2` for high-quality plots. Images are embedded as CID attachments.
+When `cron_only=1`, the email is only sent by the cron daemon — not during a
+participant's browser visit. This is essential for reminder emails in diary/ESM studies.
+
+### Knitr in Pause/Wait bodies
+
+Pause body content is rendered via knitr when it contains R code (`` `r ` `` or
+`` ```{r} ``). For Pause units, `body` is display content. For Wait units, `body`
+is the position number to jump to on click (not display content).
+
+## 5. Pause/Wait timing with relative_to
+
+The `relative_to` field on Pause/Wait units is an **R expression** that determines
+when the pause expires:
+
+- Returns a **POSIXct timestamp** → pause expires at `timestamp + wait_minutes * 60`
+- Returns **TRUE** → pause expires immediately
+- Returns **FALSE** → pause never expires (waits indefinitely)
+- If empty with `wait_minutes` set → defaults to `tail(survey_unit_sessions$created, 1)`
+
+Common timing patterns:
+
+```r
+# Wait until next day 9 AM:
+time_passed(hours = 1) && hour(now()) >= 9
+
+# Wait 3 hours from when the last unit was visited, only during 9am-10pm:
 library(lubridate)
-time_passed(minutes = x_minutes) && hour(now()) > 9 && hour(now()) < 22
+time_passed(minutes = 180) && hour(now()) > 9 && hour(now()) < 22
+
+# Wait until a specific condition on survey data:
+date(now()) > as.Date(baseline$created) && hour(now()) >= 9
 ```
 
 ## 6. Referencing survey data
@@ -404,18 +564,150 @@ Access previously collected data using `survey_name$variable_name`:
 - `demographics$age` — the `age` variable from the `demographics` survey
 - `nrow(diary)` — number of rows submitted for the `diary` survey
 - `friend_list[, "name_friend1"]` — specific column from another survey
+- `tail(diary$created, 1)` — timestamp of the most recent diary entry
+- `diary$created` vector — all submission timestamps for the `diary` survey
 
-## 7. Available R packages
+System columns available in every survey: `created`, `ended`, `modified`.
+
+## 7. survey_unit_sessions — tracking unit visits
+
+`survey_unit_sessions` is a system data frame tracking **every unit visit** for the
+current participant. Key columns:
+
+| Column | Description |
+|--------|-------------|
+| `created` | Datetime when this unit session was created |
+| `ended` | When the session ended (NULL = still active) |
+| `position` | Run position of the unit (not in base schema, accessible via joins) |
+| `result` | Human-readable result string |
+
+Common patterns:
+
+```r
+# When was the SMS at position 55 last sent?
+tail(survey_unit_sessions[survey_unit_sessions$position == 55, ]$created, 1)
+
+# Has a reminder (position 60) already been sent today?
+date(tail(survey_unit_sessions[survey_unit_sessions$position == 60, ]$created, 1)) == today()
+
+# What hour was the last SMS sent?
+hour(last(survey_unit_sessions[survey_unit_sessions$position == 55, ]$created))
+```
+
+## 8. External unit R code
+
+When an External unit's `address` field does **not** start with `http`, it is
+evaluated as R code via OpenCPU. This enables:
+
+- SMS gateway API calls via `httr::GET()`
+- Phone number transformation
+- Conditional redirects (return a URL string to redirect, or `FALSE` to move on)
+- Cross-run data queries via `formr_connect()` + `formr_raw_results()`
+
+The R expression has access to all the participant's run data, just like conditions.
+The return value determines behavior:
+- Returns **FALSE** → no redirect, advance to next unit
+- Returns a **URL string** → participant is redirected to that URL
+- Any other value → logged, advance to next unit
+
+The `api_end` field controls what happens after execution:
+- `api_end = 0` (default): formr immediately ends the unit session and moves on.
+  Use this for fire-and-forget actions (e.g., sending an SMS).
+- `api_end = 1`: formr does NOT auto-advance. It waits for the external service
+  to call back via the formr API. Use this for integrations that need confirmation.
+
+## 9. Run secrets
+
+Never hardcode API credentials in External unit code. Use the run's `secrets`
+setting to store them securely:
+
+1. Add secret names (not values) to the run settings: `"secrets": ["sms_api_key", "sms_password"]`
+2. Fill in the actual values in the formr admin interface (they're encrypted at rest)
+3. Reference them in R code as `.formr$secret_<name>`:
+```r
+# In an External unit's R code:
+sms_key <- .formr$secret_sms_api_key
+sms_pw <- .formr$secret_sms_password
+httr::GET(paste0("https://sms-gateway.example/send?user=", sms_key, "&pw=", sms_pw, "&to=", phone))
+```
+
+Secrets are conditionally injected — only those referenced in code are included
+in the OpenCPU evaluation. Error messages are automatically redacted to prevent
+leaking secret values.
+
+## 10. Cross-run data access
+
+To query data from another formr run (e.g., counting acquaintance reports), use
+`formr_connect()` and `formr_raw_results()` within an External unit's R code:
+
+```r
+library(formr)
+formr_connect(email = "admin@study.edu", password = .formr$secret_admin_pw,
+              host = "https://formr.example.org")
+acq_data <- formr_raw_results("acq_survey")
+nrow(acq_data)  # count total acquaintance reports
+```
+
+This requires storing admin credentials as run secrets (see §9) and the formr
+R package being available on the OpenCPU instance.
+
+## 11. Available R packages
 
 formr's OpenCPU instance has many R packages pre-installed, including:
-`lubridate`, `ggplot2`, `dplyr`, `tidyr`, `DT`, `knitr`, and others from
-CRAN. The OpenCPU Dockerfile defines which packages are available.
+`lubridate`, `ggplot2`, `dplyr`, `tidyr`, `DT`, `knitr`, `formr`, `httr`,
+`stringr`, `purrr`, `psych`, `data.table`, and others from CRAN.
 
-## 8. Special variables
+## 12. Robust R condition patterns
 
-- `survey_run_sessions$session` — current participant's session code
-- `survey_run_sessions$created` — when the session was created
-- `login_link` — placeholder in email bodies, replaced with participant login URL
+Real studies need defensive R code that handles missing data, empty data frames,
+and edge cases. Here are proven patterns:
+
+### Safe data frame existence checks
+```r
+# Check if a survey has been completed at all
+if (!exists("my_survey") || is.null(my_survey) || nrow(my_survey) == 0) {
+    FALSE  # survey not yet completed
+}
+```
+
+### Safe last-value access
+```r
+# Access the most recent value, handling NULL/empty cases
+if (length(my_survey$variable) == 0 || all(is.na(my_survey$variable))) {
+    FALSE  # no data available
+} else {
+    tail(my_survey$variable, 1) == 1
+}
+```
+
+### 24-hour inactivity detection
+```r
+nrow(esm) > 0 &&
+as.numeric(difftime(now(), tail(esm$created, 1), units = "hours")) > 24
+```
+
+### Day counting from baseline
+```r
+library(lubridate)
+as.numeric(difftime(today(), as.Date(tail(baseline$created, 1)), units = "days")) >= 5
+```
+
+### Named R function in conditions
+For complex logic, define a function and call it:
+```r
+is_eligible <- function() {
+    if (is.null(screening)) return(FALSE)
+    screening$age >= 14 && screening$age <= 18 &&
+    screening$german == 1
+}
+is_eligible()
+```
+
+### recipient_field patterns in Email units
+The `recipient_field` on Email units can be:
+- `"most recent reported address"` (default) — uses the most recent email-type item
+- `"survey_name$item_name"` — references a specific email item (e.g., `"baseline$email_address"`)
+- An R expression that returns an email address string
 """
 
 
@@ -812,7 +1104,148 @@ Random-interval reminders throughout the day.
 
 ---
 
-## 3. Filter / Screening
+## 3. ESM with Wait Units and Reminder (Production Pattern)
+
+This is the production-tested pattern for experience sampling studies.
+It uses Wait units for click-through windows, Email for cron-sent reminders,
+SkipForward for time-gating, and SkipBackward for daily looping.
+
+```json
+{
+    "name": "ESM_with_reminders",
+    "units": [
+        {
+            "type": "Survey",
+            "description": "baseline: collect contact info",
+            "position": 10
+        },
+        {
+            "type": "Pause",
+            "description": "wait until next day 9AM before ESM starts",
+            "position": 20,
+            "wait_minutes": 600,
+            "relative_to": "library(lubridate)\ntime_passed(hours = 1) && hour(now()) >= 9 && date(now()) > as.Date(baseline$created)",
+            "body": "## See you tomorrow!\n\nThe ESM phase starts tomorrow at 9:00 AM."
+        },
+        {
+            "type": "SkipForward",
+            "description": "ESM beep 1: skip if past 12:00",
+            "position": 25,
+            "condition": "hour(now()) >= 12",
+            "if_true": 50,
+            "automatically_jump": 1,
+            "automatically_go_on": 1
+        },
+        {
+            "type": "Wait",
+            "description": "ESM beep 1: wait up to 90 min for participant to click",
+            "position": 30,
+            "wait_minutes": 90,
+            "body": 45
+        },
+        {
+            "type": "Email",
+            "description": "ESM beep 1: reminder email (cron only)",
+            "position": 40,
+            "account_id": 1,
+            "subject": "Time to tell us about your experiences!",
+            "recipient_field": "most recent reported address",
+            "body": "Your morning questionnaire is ready!\n\n{{login_link}}",
+            "cron_only": 1
+        },
+        {
+            "type": "Survey",
+            "description": "ESM survey",
+            "position": 45
+        },
+        {
+            "type": "SkipForward",
+            "description": "ESM beep 2: skip if past 15:00",
+            "position": 50,
+            "condition": "hour(now()) >= 15",
+            "if_true": 70,
+            "automatically_jump": 1,
+            "automatically_go_on": 1
+        },
+        {
+            "type": "Wait",
+            "description": "ESM beep 2: wait up to 90 min",
+            "position": 55,
+            "wait_minutes": 90,
+            "body": 80
+        },
+        {
+            "type": "Email",
+            "description": "ESM beep 2: reminder (cron only)",
+            "position": 60,
+            "account_id": 1,
+            "subject": "Afternoon questionnaire",
+            "recipient_field": "most recent reported address",
+            "body": "Time for your afternoon check-in!\n\n{{login_link}}",
+            "cron_only": 1
+        },
+        {
+            "type": "Survey",
+            "description": "ESM survey",
+            "position": 65
+        },
+        {
+            "type": "Pause",
+            "description": "overnight pause until next 9AM",
+            "position": 70,
+            "wait_minutes": 600,
+            "relative_to": "library(lubridate)\ntime_passed(hours = 1) && hour(now()) >= 9",
+            "body": "See you tomorrow!"
+        },
+        {
+            "type": "Survey",
+            "description": "ESM survey (afternoon, second instance)",
+            "position": 75
+        },
+        {
+            "type": "Pause",
+            "description": "overnight pause (alternate path)",
+            "position": 80,
+            "wait_minutes": 600,
+            "relative_to": "library(lubridate)\ntime_passed(hours = 1) && hour(now()) >= 9",
+            "body": "See you tomorrow!"
+        },
+        {
+            "type": "SkipForward",
+            "description": "24hr dropout: if inactive for 24+ hours, end study",
+            "position": 85,
+            "condition": "nrow(esm) > 0 && as.numeric(difftime(now(), tail(esm$created, 1), units='hours')) > 24",
+            "if_true": 110,
+            "automatically_jump": 1,
+            "automatically_go_on": 1
+        },
+        {
+            "type": "SkipBackward",
+            "description": "loop back to beep 1 if < 10 days and < 50 completions",
+            "position": 90,
+            "condition": "nrow(esm) < 50 && as.numeric(difftime(now(), baseline$created, units='days')) < 10.5",
+            "if_true": 25
+        },
+        {
+            "type": "Endpage",
+            "description": "dropout: 24hr inactivity",
+            "position": 110,
+            "body": "We haven't heard from you in over 24 hours. Thank you for your participation so far."
+        }
+    ]
+}
+```
+
+**Key patterns demonstrated:**
+- **Wait `body` positions**: `body: 45` means "if participant clicks within 90 min, jump to position 45 (survey)"
+- **SkipForward time gates**: skip entire beeps if the time window has passed
+- **`cron_only: 1` on Email**: reminder emails are only sent by the cron daemon, not during participant visits
+- **24-hour dropout**: SkipForward checks `difftime()` against last ESM completion
+- **Loop condition**: SkipBackward checks both completion count and days elapsed since baseline
+
+---
+
+## 4. Filter / Screening
 
 Skip participants who don't meet criteria.
 
@@ -1142,6 +1575,44 @@ Each Survey unit defines its items inline as JSON objects.
 def _best_practices():
     return """# Best Practices
 
+## ⚠️ Critical: Page/Endpage Permanently End the Run
+
+**This is the #1 most common mistake in formr run design.**
+
+`Page` and `Endpage` units **permanently end the run session**. They set
+`end_session = true` and `end_run_session = true`. The participant **cannot
+advance past them** — there is no "Continue" button.
+
+**Every unit that comes after a Page/Endpage in position order (without a branch
+redirecting around it) is unreachable.** Entire study phases become invisible.
+
+### What to use instead
+
+| Scenario | ❌ Don't use | ✅ Use |
+|----------|-------------|--------|
+| Waiting between phases | Page | Pause (displays `body` content while waiting) |
+| Click-through to continue | Page | Wait (lets participant click through via `body` position) |
+| Informational text only | Page | Survey with `note` items |
+| Thank-you / exclusion end | Endpage | Endpage (this IS the correct use) |
+| Feedback at study end | Endpage | Endpage (correct) — but only at the true end |
+
+### The Pause vs Wait difference
+
+- **Pause**: Displays `body` content (markdown/knitr). No user interaction possible.
+  Only cron advances past a Pause when the timer/condition expires.
+- **Wait**: The `body` field is an **integer position** to jump to on click.
+  If the participant arrives, they click through. If only cron arrives,
+  it waits until the timer expires, then advances to the next position.
+
+### Common ESM mistake pattern
+```
+❌  Survey → Page("instructions") → Pause → Survey → ...
+   (Page ends the session, everything after is unreachable!)
+
+✅  Survey → Pause(body="instructions...") → Survey → ...
+   (Pause displays instructions and lets cron advance when ready)
+```
+
 ## Run Design
 
 **Position spacing**: Use gaps (10, 20, 30, ...) so you can insert units between
@@ -1155,6 +1626,13 @@ branch conditions are FALSE. The fallthrough continues to the next position.
 
 **Cron for automated actions**: Set `cron_active=1` in settings and use
 `cron_only=1` on Email units that should only fire from cron, not on first visit.
+
+**24-hour dropout detection**: For ESM studies, include a SkipForward that checks
+whether the last survey completion was >24 hours ago and redirects to an
+exclusion Endpage or a keep-in-loop Survey for staff intervention.
+
+**Reminder deduplication**: Use `survey_unit_sessions` to check whether a reminder
+has already been sent today, avoiding duplicate emails on the same day.
 
 ## Survey Design
 
@@ -1188,6 +1666,48 @@ auto-submit on submit buttons.
 **Sticky values**: Use `value = "sticky"` on items to preserve the last entered
 value (useful for diary studies).
 
+## Email Units
+
+**recipient_field patterns**:
+- `"most recent reported address"` (default) — uses the most recent email-type survey item
+- `"survey_name$item_name"` — references a specific email item from a specific survey
+- Any R expression that returns an email address string
+
+**cron_only on reminders**: Set `cron_only: 1` on Email units that should only be
+sent by the cron daemon. When a participant visits a `cron_only` Email unit, no
+email is sent and the unit is immediately completed. This prevents duplicate
+reminder emails when a participant logs in.
+
+**Knitr in email bodies**: Email bodies support `` `r expr` `` inline R and
+`` ```{r} ``` `` code chunks. Use these for personalized greetings:
+```r
+`r ifelse(demographics$gender == 1, "Lieber Teilnehmer", "Liebe Teilnehmerin")`,
+```
+
+## External Units
+
+**URL vs R code**: When `address` starts with `http`, it's a redirect URL.
+Otherwise, it's R code executed via OpenCPU. This means you can put entire
+R scripts in `address`:
+
+```r
+# In the address field of an External unit:
+library(stringr)
+number <- str_replace_all(baseline$phone, " ", "")
+body <- paste0("Please complete the survey: ", "https://study.example.org/esm/")
+httr::GET(paste0("https://sms-gateway.example/send?to=", number, "&msg=", body))
+FALSE  # return FALSE to move on without redirecting
+```
+
+**api_end field**:
+- `api_end = 0` (default): formr immediately ends the unit session after execution.
+  Use for fire-and-forget actions like sending an SMS.
+- `api_end = 1`: formr waits for an external service to call back. The unit session
+  stays open until the callback is received or `expire_after` minutes pass.
+
+**Secrets for credentials**: Never hardcode API keys in External unit code.
+Store them in run secrets and access via `.formr$secret_<name>`.
+
 ## R Code
 
 **Reference surveys by name**: The survey name becomes the data frame name.
@@ -1196,34 +1716,272 @@ value (useful for diary studies).
 **nrow() for counting**: `nrow(diary)` counts how many times the `diary` survey
 has been filled out. Useful for loop conditions.
 
+**tail() for most recent**: `tail(diary$created, 1)` gives the most recent
+submission timestamp. Essential for dropout detection.
+
 **lubridate for timing**: Use `library(lubridate)` for date arithmetic in pause
 conditions and showif expressions.
+
+**survey_unit_sessions for deduplication**: This system data frame tracks every
+unit visit. Use it to check when an SMS was last sent or whether a reminder
+was already sent today.
 
 **Package availability**: OpenCPU has many CRAN packages. If you need one that's
 not installed, it needs to be added to the OpenCPU Dockerfile.
 
 ## Common Mistakes
 
-1. **Survey unit without study_id or survey_data** — a Survey unit must either
+1. **Page/Endpage blocking the flow** — `Page` and `Endpage` permanently end
+   the run session. Every unit after them (in position order, without a branch
+   redirecting around them) is unreachable. Use `Pause` for informational text
+   and `Wait` for click-through points instead.
+2. **Survey unit without study_id or survey_data** — a Survey unit must either
    reference an existing survey (`study_id`) or include inline `survey_data`.
    Without one of these, the survey won't work. When embedding `survey_data`,
    also include the original `study_id` if the survey already exists on the
    server (the API preserves the link).
-2. **Wrong account_id on Email units** — the email account must be owned by the
+3. **Wrong account_id on Email units** — the email account must be owned by the
    run owner. Check ownership before importing.
-3. **Branch if_true points to itself** — creates an infinite loop. Always point
+4. **Branch if_true points to itself** — creates an infinite loop. Always point
    to a different position.
-4. **Missing cron_active** — Pause/Wait/Email units won't process without
+5. **Missing cron_active** — Pause/Wait/Email units won't process without
    `cron_active=1` in settings.
- 5. **Overlapping position numbers** — duplicates cause undefined behavior.
-    Always use unique positions.
-6. **Page/Endpage as first unit** — the lowest position in a run must be a
-     content unit like `Survey` or `Privacy`. `Page` and `Endpage` end the
-     session and cannot serve as the entry point. If you need a landing page
-     for filtered-out participants, put a `Survey` first, then a `SkipForward`
-     to check eligibility, and let the `Endpage` follow as a fallthrough.
- 7. **Using `null` to clear settings** — when clearing a run setting field (e.g.
-    `header_image_path`), passing `null` may be silently ignored by the formr
-    API. Use an empty string `""` instead: `update_run_settings(name,
-    {"header_image_path": ""})`.
+6. **Overlapping position numbers** — duplicates cause undefined behavior.
+   Always use unique positions.
+7. **Using `null` to clear settings** — when clearing a run setting field (e.g.
+   `header_image_path`), passing `null` may be silently ignored by the formr
+   API. Use an empty string `""` instead: `update_run_settings(name,
+   {"header_image_path": ""})`.
+8. **Wait body as display content** — in `Wait` units, `body` is a position
+   number for click-through redirect, NOT display content like Pause. If you
+   put HTML/markdown in a Wait body, it will try to jump to that position number
+   and fail.
+9. **Hardcoded credentials in External units** — never put API keys or passwords
+   directly in R code. Use run secrets (`.formr$secret_<name>`) instead.
+10. **Ignoring survey_unit_sessions** — this table is essential for ESM studies.
+    Use it to track when notifications were sent and implement reminder
+    deduplication.
+"""
+
+
+# ── Advanced unit types ──────────────────────────────────────────────
+
+@_topic("unit-types-advanced", "Wait, External, secrets, and ESM patterns")
+def _unit_types_advanced():
+    return r"""# Advanced Unit Types: Wait, External, Secrets, and ESM
+
+These unit types and patterns are essential for diary and experience sampling
+studies.
+
+## Wait Unit
+
+The `Wait` unit extends `Pause` with **interactive click-through**. It is the
+key building block for ESM/diary study designs.
+
+### How it works
+
+When a participant arrives at a Wait unit:
+1. If they **click through** (interact with the page), they jump to the position
+   stored in `body`
+2. If the **timer expires** (cron processes the unit), they advance to the next
+   sequential position
+
+This creates two paths:
+- **Participant arrives** → Wait → clicks → jumps to `body` position (usually a survey)
+- **Timer expires** (cron) → Wait → advance to next position (usually a reminder Email)
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | `"Wait"` |
+| `position` | int | Position in the run |
+| `description` | string | Description |
+| `body` | **int** | The position number to jump to on click. **NOT display content.** |
+| `wait_minutes` | decimal | Minutes to wait before advancing via cron |
+| `wait_until_time` | string | Time of day HH:MM:SS for additional time gate |
+| `wait_until_date` | string | Date for additional date gate |
+| `relative_to` | string | R expression for dynamic timing (same as Pause) |
+
+### Example: ESM beep with 90-min window
+
+```json
+{
+    "type": "Wait",
+    "position": 30,
+    "description": "ESM beep: wait up to 90 min for participant",
+    "wait_minutes": 90,
+    "body": 45,
+    "relative_to": ""
+}
+```
+
+- Participant clicks within 90 min → jumps to position 45 (ESM survey)
+- 90 min passes (cron) → advances to position 31 (reminder Email)
+
+### Critical: Wait body is a position, NOT content
+
+The `body` field on a Wait unit is the **integer position** to redirect to on
+click. Do NOT put HTML or markdown in it — that's what Pause `body` is for.
+If you write `"body": "<p>Click here</p>"`, formr will try to parse it as a
+position number and fail.
+
+## External Unit — R Code Execution
+
+When the `address` (JSON field name: `address`, originally `external_link`)
+doesn't start with `http`, formr treats it as **R code** and evaluates it
+via OpenCPU with the participant's full run data available.
+
+### What External R code can do
+
+- Send SMS messages via API (`httr::GET()` / `httr::POST()`)
+- Transform data (e.g., phone number formatting)
+- Return a URL string → participant is redirected to that URL
+- Return `FALSE` → no redirect, advance to next unit
+- Access all survey data for the current participant
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | `"External"` |
+| `position` | int | Position in the run |
+| `description` | string | Description |
+| `address` | string | URL for redirect, or R code for execution |
+| `api_end` | 0 or 1 | `0` = auto-advance after execution (default). `1` = wait for external callback |
+| `expire_after` | int | Minutes until unit auto-expires (with `api_end=1`) |
+
+### Example: Send SMS via API
+
+```json
+{
+    "type": "External",
+    "position": 80,
+    "description": "Send SMS notification",
+    "address": "library(stringr)\nphone <- str_replace_all(baseline$phone, \" \", \"\")\nhttr::GET(paste0(\"https://sms.example.com/send?to=\", phone, \"&msg=Hello\"))\nFALSE",
+    "api_end": 0,
+    "expire_after": 0
+}
+```
+
+### Secrets for API credentials
+
+Never hardcode API keys. Store them in run secrets and reference via
+`.formr$secret_<name>`:
+
+```r
+# In External unit address:
+sms_key <- .formr$secret_sms_key
+httr::GET(paste0("https://sms.example.com/send?key=", sms_key, "&to=", phone))
+```
+
+To add secrets, include them in the run settings:
+```json
+{"secrets": ["sms_key", "sms_password"]}
+```
+Then fill in actual values via the formr admin interface.
+
+## ESM Study Design Pattern
+
+The production-tested ESM pattern uses these units for each daily beep:
+
+```
+SkipForward (time gate) → Wait (click window) → Email (reminder) → Survey
+```
+
+### Complete beep structure
+
+```json
+{
+    "type": "SkipForward",
+    "position": 25,
+    "condition": "hour(now()) >= 12",
+    "if_true": 50,
+    "description": "Skip beep 1 if past 12:00"
+}
+{
+    "type": "Wait",
+    "position": 30,
+    "wait_minutes": 90,
+    "body": 45,
+    "description": "90-min click window for beep 1"
+}
+{
+    "type": "Email",
+    "position": 40,
+    "cron_only": 1,
+    "subject": "Time for your questionnaire!",
+    "body": "{{login_link}}"
+}
+{
+    "type": "Survey",
+    "position": 45,
+    "description": "ESM survey"
+}
+```
+
+### 24-hour dropout detection
+
+```json
+{
+    "type": "SkipForward",
+    "position": 85,
+    "condition": "nrow(esm) > 0 && as.numeric(difftime(now(), tail(esm$created, 1), units='hours')) > 24",
+    "if_true": 110,
+    "description": "24hr inactivity → end study"
+}
+```
+
+### Reminder deduplication
+
+```json
+{
+    "type": "SkipForward",
+    "position": 59,
+    "condition": "length(survey_unit_sessions[survey_unit_sessions$position == 60, ]$created) > 0 && date(tail(survey_unit_sessions[survey_unit_sessions$position == 60, ]$created, 1)) == today()",
+    "if_true": 61,
+    "description": "Skip reminder if already sent today"
+}
+```
+
+### Day counting for 10-day ESM
+
+```json
+{
+    "type": "SkipBackward",
+    "position": 90,
+    "condition": "nrow(esm) < 50 && as.numeric(difftime(now(), baseline$created, units='days')) < 10.5",
+    "if_true": 25,
+    "description": "Continue if <10.5 days and <50 completions"
+}
+```
+
+## Cross-Run Data Access
+
+To query data from another formr run (e.g., counting acquaintance reports),
+use `formr_connect()` and `formr_raw_results()` within an External unit:
+
+```r
+library(formr)
+formr_connect(email = "admin@study.edu",
+              password = .formr$secret_admin_pw,
+              host = "https://formr.example.org")
+acq <- formr_raw_results("acq_survey")
+nrow(acq)
+```
+
+This requires the `formr` R package and admin credentials stored as run secrets.
+
+## Personalized Links Between Runs
+
+To create a link from one run to another that carries the participant's session:
+
+```r
+# In an Email body or Pause body:
+paste0('https://formr.example.org/acq-run/?ps=1&anchor=',
+       stringr::str_sub(survey_run_sessions$session, 1, 20))
+```
+
+The `anchor` parameter pre-fills the acquaintance run with the participant's
+truncated session code, enabling data linkage.
 """
