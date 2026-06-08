@@ -132,6 +132,72 @@ def _coerce_field(key: str, value: Any) -> Any:
     return value
 
 
+# Position-reference fields: keys that contain integer positions pointing to
+# other units (not the unit's own position).
+POSITION_REF_FIELDS = {
+    ("Branch", "if_true"),
+    ("SkipForward", "if_true"),
+    ("SkipBackward", "if_true"),
+    ("Wait", "body"),
+}
+
+
+def _check_dangling_references(units: list[dict], removed_positions: set[int]) -> list[str]:
+    """Find position references pointing to any of the removed_positions.
+
+    Returns a list of warning strings describing each dangling reference.
+    """
+    warnings = []
+    all_positions = {u.get("position") for u in units if isinstance(u.get("position"), int)}
+    for u in units:
+        p = u.get("position")
+        if not isinstance(p, int):
+            continue
+        utype = u.get("type", "")
+        for ref_type, ref_field in POSITION_REF_FIELDS:
+            if utype != ref_type:
+                continue
+            value = u.get(ref_field)
+            if value is None:
+                continue
+            try:
+                int_value = int(value)
+            except (ValueError, TypeError):
+                continue
+            if int_value in removed_positions:
+                warnings.append(
+                    f"{utype} at position {p} has {ref_field}={int_value} "
+                    f"referencing a removed position"
+                )
+    return warnings
+
+
+def _update_position_references(units: list[dict], position_map: dict[int, int]) -> int:
+    """Remap position references (if_true, Wait body) using position_map.
+
+    For each unit, if it has a position-reference field whose value is a key in
+    position_map, replace it with the mapped value. Returns the number of
+    references updated.
+    """
+    updated = 0
+    for unit in units:
+        utype = unit.get("type", "")
+        for ref_type, ref_field in POSITION_REF_FIELDS:
+            if utype != ref_type:
+                continue
+            value = unit.get(ref_field)
+            if value is None:
+                continue
+            try:
+                int_value = int(value)
+            except (ValueError, TypeError):
+                continue
+            if int_value in position_map:
+                unit[ref_field] = position_map[int_value]
+                updated += 1
+    return updated
+
+
 def _build_unit(unit_type: str, position: int, **kwargs) -> dict:
     """Build a unit dict with defaults for the given type."""
     if unit_type not in UNIT_SCHEMAS:
@@ -186,6 +252,9 @@ def add_run_unit(name: str, unit_type: str, position: int, **kwargs) -> str:
     all units at that position or higher are shifted up by 10.
     If insert_mode is 'overwrite', any existing unit at that position is replaced.
     Default is 'shift'.
+
+    When shifting existing units, position references (if_true, Wait body) are
+    automatically updated to reflect the new positions.
     """
     insert_mode = kwargs.pop("insert_mode", "shift")
     structure = _load(name)
@@ -195,15 +264,19 @@ def add_run_unit(name: str, unit_type: str, position: int, **kwargs) -> str:
 
     existing_positions = {u.get("position") for u in units if isinstance(u.get("position"), int)}
 
+    shifted = False
     if position in existing_positions:
         if insert_mode == "overwrite":
             units = [u for u in units if u.get("position") != position]
         elif insert_mode == "shift":
-            # Shift all units at >= position up by 10
+            position_map = {}
             for u in units:
                 p = u.get("position")
                 if isinstance(p, int) and p >= position:
+                    position_map[p] = p + 10
                     u["position"] = p + 10
+            _update_position_references(units, position_map)
+            shifted = True
         else:
             raise ValueError(f"Unknown insert_mode '{insert_mode}'. Use 'shift' or 'overwrite'.")
 
@@ -216,7 +289,7 @@ def add_run_unit(name: str, unit_type: str, position: int, **kwargs) -> str:
     return (
         f"Added {unit_type} at position {position}"
         + (f" ('{desc}')" if desc else "")
-        + (f" (shifted existing positions >= {position} up by 10)" if insert_mode == "shift" and position in existing_positions else "")
+        + (f" (shifted existing positions >= {position} up by 10)" if shifted else "")
         + f". {saved}"
     )
 
@@ -224,7 +297,9 @@ def add_run_unit(name: str, unit_type: str, position: int, **kwargs) -> str:
 def remove_run_unit(name: str, position: int, compact: bool = False) -> str:
     """Remove a unit at the given position from the local run structure file.
 
-    If compact is True, shifts all units at higher positions down to fill the gap.
+    If compact is True, shifts all units at higher positions down by 1 to fill the gap.
+    When compacting, position references (if_true, Wait body) are automatically
+    updated. Dangling references to the removed position are detected and reported.
     """
     structure = _load(name)
     units = structure.get("units", [])
@@ -241,23 +316,34 @@ def remove_run_unit(name: str, position: int, compact: bool = False) -> str:
     if removed is None:
         raise ValueError(f"No unit found at position {position}")
 
+    warnings = []
+
     if compact:
+        position_map: dict[int, int] = {}
         for u in remaining:
             p = u.get("position")
             if isinstance(p, int) and p > position:
+                position_map[p] = p - 1
                 u["position"] = p - 1
+        _update_position_references(remaining, position_map)
+
+    dangling = _check_dangling_references(remaining, {position})
+    warnings.extend(dangling)
 
     structure["units"] = remaining
     saved = _save(name, structure)
 
     unit_type = removed.get("type", "?")
     desc = removed.get("description", "")
-    gap_shift = " (compacted positions to fill gap)" if compact else ""
-    return (
-        f"Removed {unit_type} at position {position}"
-        + (f" ('{desc}')" if desc else "")
-        + f"{gap_shift}. {saved}"
-    )
+    parts = [f"Removed {unit_type} at position {position}"]
+    if desc:
+        parts[0] += f" ('{desc}')"
+    if compact:
+        parts.append("(compacted positions to fill gap)")
+    if warnings:
+        parts.append(f"WARNING: {'; '.join(warnings)}")
+    parts.append(saved)
+    return " ".join(parts)
 
 
 def duplicate_run_units(name: str, from_positions: list[int], to_start_position: int,
@@ -270,6 +356,11 @@ def duplicate_run_units(name: str, from_positions: list[int], to_start_position:
 
     If shift_existing is True and any new position conflicts with existing units,
     all existing units at >= to_start_position are shifted up to make room.
+
+    Position references (if_true, Wait body) are updated in three ways:
+    1. Internal references within the copied block are remapped to the new positions.
+    2. References in existing units that are shifted are updated to reflect new positions.
+    3. References in copied units pointing to shifted external positions are updated.
     """
     structure = _load(name)
     units = structure.get("units", [])
@@ -292,9 +383,15 @@ def duplicate_run_units(name: str, from_positions: list[int], to_start_position:
     for i in range(len(source_units)):
         new_positions.append(to_start_position + (i * 10))
 
+    # Build mapping from source positions to new positions (for internal remap)
+    source_set = set(from_positions)
+    source_to_dest: dict[int, int] = {}
+    for src_pos, new_pos in zip(sorted(from_positions), new_positions):
+        source_to_dest[src_pos] = new_pos
+
     # Check for conflicts and shift if needed
     existing_positions = {u.get("position") for u in units if isinstance(u.get("position"), int)}
-    max_new_pos = max(new_positions)
+    shift_map: dict[int, int] = {}
 
     if shift_existing:
         # Find the minimum existing position that conflicts
@@ -303,7 +400,8 @@ def duplicate_run_units(name: str, from_positions: list[int], to_start_position:
             shift_by = max(new_positions) - min(conflicts) + 10
             for u in units:
                 p = u.get("position")
-                if isinstance(p, int) and p >= min(conflicts) and p not in from_positions:
+                if isinstance(p, int) and p >= min(conflicts) and p not in source_set:
+                    shift_map[p] = p + shift_by
                     u["position"] = p + shift_by
     else:
         for np in new_positions:
@@ -312,8 +410,11 @@ def duplicate_run_units(name: str, from_positions: list[int], to_start_position:
                     f"Position {np} already occupied. Use shift_existing=True or choose a different to_start_position."
                 )
 
-    # Create new units
-    src_desc_prefix = ""
+    # Update position references in existing (shifted) units
+    if shift_map:
+        _update_position_references(units, shift_map)
+
+    # Create new units with remapped internal references
     for src, new_pos in zip(source_units, new_positions):
         new_unit = copy.deepcopy(src)
         new_unit["position"] = new_pos
@@ -323,17 +424,40 @@ def duplicate_run_units(name: str, from_positions: list[int], to_start_position:
             desc = new_unit["description"]
             if not desc.startswith("copy: "):
                 new_unit["description"] = f"copy: {desc}"
+        # Remap internal references (if_true, Wait body) within the source block
+        utype = new_unit.get("type", "")
+        for ref_type, ref_field in POSITION_REF_FIELDS:
+            if utype != ref_type:
+                continue
+            value = new_unit.get(ref_field)
+            if value is None:
+                continue
+            try:
+                int_value = int(value)
+            except (ValueError, TypeError):
+                continue
+            if int_value in source_to_dest:
+                # Internal reference: remap to corresponding new position
+                new_unit[ref_field] = source_to_dest[int_value]
+            elif int_value in shift_map:
+                # External reference to a shifted position: update it
+                new_unit[ref_field] = shift_map[int_value]
+            # Otherwise: reference to a position outside both blocks, leave as-is
         units.append(new_unit)
 
     units.sort(key=lambda u: u.get("position", 0))
     structure["units"] = units
     saved = _save(name, structure)
 
-    return (
+    parts = [
         f"Duplicated {len(source_units)} unit(s) from positions "
         f"{','.join(str(p) for p in sorted(from_positions))} → "
-        f"new positions {','.join(str(p) for p in new_positions)}. {saved}"
-    )
+        f"new positions {','.join(str(p) for p in new_positions)}."
+    ]
+    if shift_map:
+        parts.append(f"Updated {len(shift_map)} existing position(s) for room.")
+    parts.append(saved)
+    return " ".join(parts)
 
 
 def shift_run_positions(name: str, from_position: int, delta: int) -> str:
@@ -343,7 +467,8 @@ def shift_run_positions(name: str, from_position: int, delta: int) -> str:
     positions down (closing gaps). Useful for inserting groups of units or
     compacting gaps.
 
-    Does not update branch if_true targets — those must be updated manually.
+    Also updates position references (if_true on Branch/Skip units, body on
+    Wait units) to reflect the new positions.
     """
     if delta == 0:
         return "No change: delta is 0."
@@ -351,26 +476,87 @@ def shift_run_positions(name: str, from_position: int, delta: int) -> str:
     structure = _load(name)
     units = structure.get("units", [])
 
+    position_map: dict[int, int] = {}
     affected = 0
     for u in units:
         p = u.get("position")
         if isinstance(p, int) and p >= from_position:
+            position_map[p] = p + delta
             u["position"] = p + delta
             affected += 1
 
     if affected == 0:
         return f"No units at positions >= {from_position} to shift."
 
+    ref_updated = _update_position_references(units, position_map)
+
     units.sort(key=lambda u: u.get("position", 0))
     structure["units"] = units
     saved = _save(name, structure)
 
     direction = "up" if delta > 0 else "down"
-    return (
-        f"Shifted {affected} unit(s) at positions >= {from_position} "
-        f"{direction} by {abs(delta)}. "
-        f"Note: Check and update any branch if_true targets manually. {saved}"
-    )
+    parts = [f"Shifted {affected} unit(s) at positions >= {from_position} {direction} by {abs(delta)}."]
+    if ref_updated:
+        parts.append(f"Updated {ref_updated} position reference(s) (if_true, Wait body).")
+    parts.append(saved)
+    return " ".join(parts)
+
+
+def renormalize_positions(name: str, spacing: int = 10) -> str:
+    """Renumber all unit positions to clean multiples of spacing while preserving order.
+
+    Assigns new positions: spacing, spacing*2, spacing*3, ... based on the current
+    sorted order. All position references (if_true on Branch/Skip units, body on
+    Wait units) are automatically updated to reflect the new positions.
+
+    This is useful after a series of edits that leave positions with gaps or
+    irregular spacing (e.g., after compact removal which shifts by 1).
+
+    Safe to call on already-clean structures — positions already at clean multiples
+    of spacing that are in the right order will remain (or nearly remain) the same.
+    """
+    if spacing < 1:
+        raise ValueError(f"spacing must be >= 1, got {spacing}")
+
+    structure = _load(name)
+    units = structure.get("units", [])
+    if not units:
+        return "No units to renormalize."
+
+    sorted_units = sorted(units, key=lambda u: u.get("position", 0))
+
+    old_positions = []
+    for u in sorted_units:
+        p = u.get("position")
+        if isinstance(p, int):
+            old_positions.append(p)
+        elif isinstance(p, str) and p.isdigit():
+            old_positions.append(int(p))
+            u["position"] = int(p)
+        else:
+            old_positions.append(0)
+            u["position"] = 0
+
+    position_map: dict[int, int] = {}
+    for i, old_pos in enumerate(old_positions):
+        new_pos = (i + 1) * spacing
+        if old_pos != new_pos:
+            position_map[old_pos] = new_pos
+        u = sorted_units[i]
+        u["position"] = new_pos
+
+    ref_updated = _update_position_references(sorted_units, position_map)
+
+    structure["units"] = sorted_units
+    saved = _save(name, structure)
+
+    parts = [f"Renormalized {len(sorted_units)} unit(s) to positions {spacing}, {spacing*2}, ..."]
+    if position_map:
+        parts.append(f"Changed {len(position_map)} position(s), updated {ref_updated} reference(s).")
+    else:
+        parts.append("No position changes needed — already clean.")
+    parts.append(saved)
+    return " ".join(parts)
 
 
 def generate_survey_items(description: str, survey_name: str = "survey",

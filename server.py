@@ -21,6 +21,7 @@ from formr_mcp.editing import (
     duplicate_run_units as editing_duplicate_run_units,
     generate_survey_items as editing_generate_survey_items,
     remove_run_unit as editing_remove_run_unit,
+    renormalize_positions as editing_renormalize_positions,
     shift_run_positions as editing_shift_run_positions,
 )
 from formr_mcp.summarize import find_items, summarize_run_structure
@@ -386,6 +387,8 @@ def add_run_unit(name: str, unit_type: str, position: int, description: str = ""
     - External: address (URL or R code), api_end (0/1)
 
     insert_mode: 'shift' (default) shifts existing units at >= position up by 10. 'overwrite' replaces any existing unit at that position.
+    When shifting, position references (if_true, Wait body) in existing units are
+    automatically updated to reflect new positions.
     """
     validate_run_name(name)
     return editing_add_run_unit(name, unit_type, position, description=description,
@@ -400,7 +403,9 @@ def remove_run_unit(name: str, position: int, compact: bool = False, ctx: Contex
     After removing, call update_run_structure_from_file to upload.
 
     If compact is True, shifts all units at higher positions down by 1 to fill the gap.
-    Warning: this does NOT update branch if_true targets — update those manually.
+    Position references (if_true on Branch/Skip units, body on Wait units) are
+    automatically updated when compacting. Dangling references to the removed
+    position are detected and reported as warnings.
     """
     validate_run_name(name)
     return editing_remove_run_unit(name, position, compact=compact)
@@ -417,6 +422,11 @@ def duplicate_run_units(name: str, from_positions: list[int], to_start_position:
     If shift_existing is True (default), any existing units at conflicting positions
     are shifted up to make room. Set shift_existing=False to error on conflicts instead.
 
+    Position references (if_true, Wait body) are automatically remapped:
+    - Internal references within the copied block point to the new positions.
+    - References in existing units that are shifted are updated accordingly.
+    - References in copies pointing to shifted external positions are also updated.
+
     The file must exist (fetch with get_run_structure_to_file first).
     """
     validate_run_name(name)
@@ -431,13 +441,33 @@ def shift_run_positions(name: str, from_position: int, delta: int, ctx: Context 
     Positive delta shifts positions up (making room for new units).
     Negative delta shifts positions down (closing gaps after removal).
 
-    WARNING: This does NOT update branch if_true targets. You must update those
-    manually after shifting positions.
+    Position references (if_true on Branch/Skip units, body on Wait units) are
+    automatically updated to reflect the new positions.
 
     The file must exist (fetch with get_run_structure_to_file first).
     """
     validate_run_name(name)
     return editing_shift_run_positions(name, from_position, delta)
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False, openWorldHint=False))
+def renormalize_positions(name: str, spacing: int = 10, ctx: Context = None) -> str:
+    """Renumber all unit positions to clean multiples of spacing while preserving order.
+
+    Assigns new positions: spacing, spacing*2, spacing*3, ... based on the current
+    sorted order. All position references (if_true on Branch/Skip units, body on
+    Wait units) are automatically updated to reflect the new positions.
+
+    Useful after a series of edits that leave positions with gaps or irregular spacing
+    (e.g., after compact removal which shifts by 1 instead of the standard 10).
+
+    Safe to call on already-clean structures — positions already at clean multiples
+    of spacing that are in the right order will remain (or nearly remain) the same.
+
+    The file must exist (fetch with get_run_structure_to_file first).
+    """
+    validate_run_name(name)
+    return editing_renormalize_positions(name, spacing=spacing)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))

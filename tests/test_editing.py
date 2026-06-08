@@ -16,6 +16,7 @@ from formr_mcp.editing import (
     duplicate_run_units,
     generate_survey_items,
     remove_run_unit,
+    renormalize_positions,
     shift_run_positions,
     WORKSPACE_DIR,
 )
@@ -115,6 +116,41 @@ class TestAddRunUnit:
         assert unit["type"] == "Pause"
         assert unit["wait_minutes"] == 600
 
+    def test_add_shift_updates_if_true(self, run_file):
+        _write_run(run_file, [
+            {"type": "Survey", "position": 10, "description": "screening"},
+            {"type": "SkipForward", "position": 20, "condition": "x==1", "if_true": 30,
+             "automatically_jump": 1, "automatically_go_on": 1},
+            {"type": "Survey", "position": 30, "description": "consent"},
+        ])
+        add_run_unit("test-run", "Survey", 20, description="inserted")
+        structure = _read_run(run_file)
+        skip = next(u for u in structure["units"] if u["type"] == "SkipForward")
+        assert skip["if_true"] == 40  # was 30, shifted by 10
+
+    def test_add_shift_updates_wait_body(self, run_file):
+        _write_run(run_file, [
+            {"type": "Survey", "position": 10, "description": "s1"},
+            {"type": "Wait", "position": 20, "body": 30},
+            {"type": "Survey", "position": 30, "description": "s2"},
+        ])
+        add_run_unit("test-run", "Survey", 20, description="inserted")
+        structure = _read_run(run_file)
+        wait = next(u for u in structure["units"] if u["type"] == "Wait")
+        assert wait["body"] == 40  # was 30, shifted by 10
+
+    def test_add_no_shift_preserves_if_true(self, run_file):
+        _write_run(run_file, [
+            {"type": "Survey", "position": 10, "description": "screening"},
+            {"type": "SkipForward", "position": 20, "condition": "x==1", "if_true": 30,
+             "automatically_jump": 1, "automatically_go_on": 1},
+            {"type": "Survey", "position": 30, "description": "consent"},
+        ])
+        add_run_unit("test-run", "Survey", 50, description="appended")
+        structure = _read_run(run_file)
+        skip = next(u for u in structure["units"] if u["type"] == "SkipForward")
+        assert skip["if_true"] == 30  # no shift, unchanged
+
     def test_unknown_unit_type_raises(self, run_file):
         _write_run(run_file, [])
         with pytest.raises(ValueError, match="Unknown unit type"):
@@ -163,6 +199,57 @@ class TestRemoveRunUnit:
         _write_run(run_file, [{"type": "Survey", "position": 10, "description": "first"}])
         with pytest.raises(ValueError, match="No unit found at position 99"):
             remove_run_unit("test-run", 99)
+
+    def test_remove_compact_updates_if_true(self, run_file):
+        _write_run(run_file, [
+            {"type": "Survey", "position": 10, "description": "s1"},
+            {"type": "Survey", "position": 20, "description": "remove me"},
+            {"type": "SkipForward", "position": 30, "condition": "x==1", "if_true": 40,
+             "automatically_jump": 1, "automatically_go_on": 1},
+            {"type": "Survey", "position": 40, "description": "target"},
+        ])
+        remove_run_unit("test-run", 20, compact=True)
+        structure = _read_run(run_file)
+        skip = next(u for u in structure["units"] if u["type"] == "SkipForward")
+        assert skip["position"] == 29  # was 30, compacted
+        assert skip["if_true"] == 39  # was 40, compacted
+
+    def test_remove_compact_updates_wait_body(self, run_file):
+        _write_run(run_file, [
+            {"type": "Survey", "position": 10, "description": "s1"},
+            {"type": "Survey", "position": 20, "description": "remove me"},
+            {"type": "Wait", "position": 30, "body": 40},
+            {"type": "Survey", "position": 40, "description": "s2"},
+        ])
+        remove_run_unit("test-run", 20, compact=True)
+        structure = _read_run(run_file)
+        wait = next(u for u in structure["units"] if u["type"] == "Wait")
+        assert wait["position"] == 29
+        assert wait["body"] == 39
+
+    def test_remove_flags_dangling_reference(self, run_file):
+        _write_run(run_file, [
+            {"type": "Survey", "position": 10, "description": "s1"},
+            {"type": "SkipForward", "position": 20, "condition": "x==1", "if_true": 30,
+             "automatically_jump": 1, "automatically_go_on": 1},
+            {"type": "Survey", "position": 30, "description": "target"},
+        ])
+        result = remove_run_unit("test-run", 30)
+        assert "WARNING" in result
+        assert "if_true" in result
+
+    def test_remove_no_compact_no_reference_change(self, run_file):
+        _write_run(run_file, [
+            {"type": "Survey", "position": 10, "description": "s1"},
+            {"type": "SkipForward", "position": 20, "condition": "x==1", "if_true": 40,
+             "automatically_jump": 1, "automatically_go_on": 1},
+            {"type": "Survey", "position": 30, "description": "remove me"},
+            {"type": "Survey", "position": 40, "description": "target"},
+        ])
+        remove_run_unit("test-run", 30, compact=False)
+        structure = _read_run(run_file)
+        skip = next(u for u in structure["units"] if u["type"] == "SkipForward")
+        assert skip["if_true"] == 40  # unchanged
 
 
 class TestDuplicateRunUnits:
@@ -220,6 +307,60 @@ class TestDuplicateRunUnits:
         with pytest.raises(ValueError, match="No unit found at position 99"):
             duplicate_run_units("test-run", [99], 100)
 
+    def test_duplicate_remaps_internal_if_true(self, run_file):
+        """If_true pointing within the copied block gets remapped to new positions."""
+        _write_run(run_file, [
+            {"type": "Survey", "position": 10, "description": "esm"},
+            {"type": "SkipForward", "position": 20, "condition": "x>3", "if_true": 10,
+             "automatically_jump": 1, "automatically_go_on": 1, "description": "loop"},
+        ])
+        result = duplicate_run_units("test-run", [10, 20], 100)
+        structure = _read_run(run_file)
+        copies = [u for u in structure["units"] if u["position"] >= 100]
+        skip_copy = next(u for u in copies if u["type"] == "SkipForward")
+        assert skip_copy["position"] == 110
+        assert skip_copy["if_true"] == 100  # remapped from 10 → 100
+
+    def test_duplicate_preserves_external_if_true(self, run_file):
+        """If_true pointing outside the copied block is left unchanged."""
+        _write_run(run_file, [
+            {"type": "Endpage", "position": 10, "body": "ineligible"},
+            {"type": "SkipForward", "position": 20, "condition": "x==1", "if_true": 10,
+             "automatically_jump": 1, "automatically_go_on": 1},
+            {"type": "Survey", "position": 30, "description": "main"},
+        ])
+        duplicate_run_units("test-run", [20], 100)
+        structure = _read_run(run_file)
+        skip_copy = next(u for u in structure["units"] if u["position"] == 100)
+        assert skip_copy["if_true"] == 10  # external, unchanged
+
+    def test_duplicate_shift_updates_existing_if_true(self, run_file):
+        """When existing units are shifted, if_true in those units is updated."""
+        _write_run(run_file, [
+            {"type": "Survey", "position": 10, "description": "s1"},
+            {"type": "SkipForward", "position": 20, "condition": "x==1", "if_true": 30,
+             "automatically_jump": 1, "automatically_go_on": 1},
+            {"type": "Survey", "position": 30, "description": "target"},
+        ])
+        # Duplicate to pos 10, which shifts the SkipForward and target
+        duplicate_run_units("test-run", [10], 10, shift_existing=True)
+        structure = _read_run(run_file)
+        skip = next(u for u in structure["units"] if u["type"] == "SkipForward")
+        # Skip was at 20, shifted to 30; if_true was 30, should now be 40
+        assert skip["position"] == 30
+        assert skip["if_true"] == 40
+
+    def test_duplicate_remaps_wait_body(self, run_file):
+        """Wait body pointing within copied block gets remapped."""
+        _write_run(run_file, [
+            {"type": "Survey", "position": 10, "description": "esm"},
+            {"type": "Wait", "position": 20, "body": 10},
+        ])
+        duplicate_run_units("test-run", [10, 20], 100)
+        structure = _read_run(run_file)
+        wait_copy = next(u for u in structure["units"] if u["type"] == "Wait" and u["position"] == 110)
+        assert wait_copy["body"] == 100  # remapped from 10 → 100
+
 
 class TestShiftRunPositions:
     def test_shift_up(self, run_file):
@@ -251,6 +392,87 @@ class TestShiftRunPositions:
         result = shift_run_positions("test-run", 10, 0)
         assert "No change" in result
 
+    def test_shift_updates_if_true(self, run_file):
+        _write_run(run_file, [
+            {"type": "Survey", "position": 10, "description": "screening"},
+            {"type": "SkipForward", "position": 20, "condition": "x==1", "if_true": 40,
+             "automatically_jump": 1, "automatically_go_on": 1},
+            {"type": "Endpage", "position": 30, "body": "not eligible"},
+            {"type": "Survey", "position": 40, "description": "consent"},
+        ])
+        shift_run_positions("test-run", 30, 5)
+        structure = _read_run(run_file)
+        skip = next(u for u in structure["units"] if u["type"] == "SkipForward")
+        assert skip["if_true"] == 45  # was 40, shifted by 5
+
+    def test_shift_preserves_unaffected_if_true(self, run_file):
+        _write_run(run_file, [
+            {"type": "Survey", "position": 10, "description": "screening"},
+            {"type": "SkipForward", "position": 20, "condition": "x==1", "if_true": 10,
+             "automatically_jump": 1, "automatically_go_on": 1},
+            {"type": "Survey", "position": 30, "description": "consent"},
+        ])
+        shift_run_positions("test-run", 30, 5)
+        structure = _read_run(run_file)
+        skip = next(u for u in structure["units"] if u["type"] == "SkipForward")
+        assert skip["if_true"] == 10  # below from_position, not shifted
+
+    def test_negative_shift_updates_if_true(self, run_file):
+        _write_run(run_file, [
+            {"type": "Survey", "position": 10, "description": "s1"},
+            {"type": "SkipForward", "position": 20, "condition": "x==1", "if_true": 40,
+             "automatically_jump": 1, "automatically_go_on": 1},
+            {"type": "Survey", "position": 40, "description": "s2"},
+        ])
+        shift_run_positions("test-run", 20, -10)
+        structure = _read_run(run_file)
+        skip = next(u for u in structure["units"] if u["type"] == "SkipForward")
+        assert skip["position"] == 10
+        assert skip["if_true"] == 30
+
+    def test_shift_updates_wait_body(self, run_file):
+        _write_run(run_file, [
+            {"type": "Survey", "position": 10, "description": "s1"},
+            {"type": "Wait", "position": 20, "body": 40},
+            {"type": "Survey", "position": 40, "description": "s2"},
+        ])
+        shift_run_positions("test-run", 20, 5)
+        structure = _read_run(run_file)
+        wait = next(u for u in structure["units"] if u["type"] == "Wait")
+        assert wait["position"] == 25
+        assert wait["body"] == 45
+
+    def test_shift_updates_wait_body_string(self, run_file):
+        _write_run(run_file, [
+            {"type": "Survey", "position": 10, "description": "s1"},
+            {"type": "Wait", "position": 20, "body": "40"},
+            {"type": "Survey", "position": 40, "description": "s2"},
+        ])
+        shift_run_positions("test-run", 40, 5)
+        structure = _read_run(run_file)
+        wait = next(u for u in structure["units"] if u["type"] == "Wait")
+        assert wait["body"] == 45
+
+    def test_shift_does_not_touch_pause_body(self, run_file):
+        _write_run(run_file, [
+            {"type": "Pause", "position": 10, "body": "Some display text"},
+            {"type": "Survey", "position": 20, "description": "s1"},
+        ])
+        shift_run_positions("test-run", 10, 5)
+        structure = _read_run(run_file)
+        pause = next(u for u in structure["units"] if u["type"] == "Pause")
+        assert pause["body"] == "Some display text"  # unchanged
+
+    def test_shift_updates_skip_backward(self, run_file):
+        _write_run(run_file, [
+            {"type": "Survey", "position": 10, "description": "loop body"},
+            {"type": "SkipBackward", "position": 30, "condition": "x<5", "if_true": 10},
+        ])
+        shift_run_positions("test-run", 10, 5)
+        structure = _read_run(run_file)
+        skip = next(u for u in structure["units"] if u["type"] == "SkipBackward")
+        assert skip["if_true"] == 15
+
 
 class TestGenerateSurveyItems:
     def test_returns_json(self):
@@ -264,3 +486,118 @@ class TestGenerateSurveyItems:
         result = generate_survey_items("BFI-15", language="de")
         parsed = json.loads(result)
         assert parsed["language"] == "de"
+
+
+class TestRenormalizePositions:
+    def test_basic_renumbering(self, run_file):
+        _write_run(run_file, [
+            {"type": "Survey", "position": 10, "description": "first"},
+            {"type": "Endpage", "position": 20, "body": "end"},
+        ])
+        result = renormalize_positions("test-run")
+        assert "2 unit(s)" in result
+        structure = _read_run(run_file)
+        positions = sorted(u["position"] for u in structure["units"])
+        assert positions == [10, 20]
+
+    def test_messy_positions_cleaned_up(self, run_file):
+        _write_run(run_file, [
+            {"type": "Survey", "position": 10, "description": "first"},
+            {"type": "Survey", "position": 19, "description": "second"},
+            {"type": "Survey", "position": 29, "description": "third"},
+            {"type": "Endpage", "position": 39, "body": "end"},
+        ])
+        renormalize_positions("test-run")
+        structure = _read_run(run_file)
+        positions = sorted(u["position"] for u in structure["units"])
+        assert positions == [10, 20, 30, 40]
+
+    def test_remap_if_true_references(self, run_file):
+        _write_run(run_file, [
+            {"type": "Survey", "position": 10, "description": "screening"},
+            {"type": "SkipForward", "position": 19, "condition": "x==1", "if_true": 39,
+             "automatically_jump": 1, "automatically_go_on": 1},
+            {"type": "Endpage", "position": 29, "body": "not eligible"},
+            {"type": "Survey", "position": 39, "description": "consent"},
+        ])
+        renormalize_positions("test-run")
+        structure = _read_run(run_file)
+        positions = sorted(u["position"] for u in structure["units"])
+        assert positions == [10, 20, 30, 40]
+        skip = next(u for u in structure["units"] if u["type"] == "SkipForward")
+        assert skip["position"] == 20
+        assert skip["if_true"] == 40
+
+    def test_remap_wait_body(self, run_file):
+        _write_run(run_file, [
+            {"type": "Survey", "position": 10, "description": "s1"},
+            {"type": "Wait", "position": 19, "body": 29},
+            {"type": "Survey", "position": 29, "description": "s2"},
+        ])
+        renormalize_positions("test-run")
+        structure = _read_run(run_file)
+        wait = next(u for u in structure["units"] if u["type"] == "Wait")
+        assert wait["position"] == 20
+        assert wait["body"] == 30
+
+    def test_remap_skip_backward(self, run_file):
+        _write_run(run_file, [
+            {"type": "Survey", "position": 10, "description": "loop body"},
+            {"type": "SkipBackward", "position": 29, "condition": "x<5", "if_true": 10},
+        ])
+        renormalize_positions("test-run")
+        structure = _read_run(run_file)
+        skip = next(u for u in structure["units"] if u["type"] == "SkipBackward")
+        assert skip["position"] == 20
+        assert skip["if_true"] == 10
+
+    def test_already_clean_positions(self, run_file):
+        _write_run(run_file, [
+            {"type": "Survey", "position": 10, "description": "first"},
+            {"type": "Endpage", "position": 20, "body": "end"},
+        ])
+        result = renormalize_positions("test-run")
+        assert "No position changes needed" in result
+
+    def test_custom_spacing(self, run_file):
+        _write_run(run_file, [
+            {"type": "Survey", "position": 5, "description": "first"},
+            {"type": "Endpage", "position": 8, "body": "end"},
+        ])
+        renormalize_positions("test-run", spacing=5)
+        structure = _read_run(run_file)
+        positions = sorted(u["position"] for u in structure["units"])
+        assert positions == [5, 10]
+
+    def test_empty_run(self, run_file):
+        _write_run(run_file, [])
+        result = renormalize_positions("test-run")
+        assert "No units" in result
+
+    def test_invalid_spacing_raises(self, run_file):
+        _write_run(run_file, [
+            {"type": "Survey", "position": 10, "description": "first"},
+        ])
+        with pytest.raises(ValueError, match="spacing must be >= 1"):
+            renormalize_positions("test-run", spacing=0)
+
+    def test_compact_then_renormalize(self, run_file):
+        """Integration: compact removal leaves messy positions, renormalize cleans them."""
+        _write_run(run_file, [
+            {"type": "Survey", "position": 10, "description": "first"},
+            {"type": "Survey", "position": 20, "description": "remove me"},
+            {"type": "SkipForward", "position": 30, "condition": "x==1", "if_true": 40,
+             "automatically_jump": 1, "automatically_go_on": 1},
+            {"type": "Survey", "position": 40, "description": "target"},
+        ])
+        remove_run_unit("test-run", 20, compact=True)
+        structure = _read_run(run_file)
+        positions = sorted(u["position"] for u in structure["units"])
+        assert positions == [10, 29, 39]
+
+        renormalize_positions("test-run")
+        structure = _read_run(run_file)
+        positions = sorted(u["position"] for u in structure["units"])
+        assert positions == [10, 20, 30]
+        skip = next(u for u in structure["units"] if u["type"] == "SkipForward")
+        assert skip["if_true"] == 30
