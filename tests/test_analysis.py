@@ -164,6 +164,28 @@ class TestVariableReferences:
         findings = _check_variable_references(structure)
         assert len(findings) == 0
 
+    def test_system_column_not_flagged(self):
+        items = [
+            {"type": "number", "name": "x", "showif": "baseline$created"},
+        ]
+        structure = _make_structure([
+            _make_survey("baseline", 10, [{"type": "mc", "name": "age", "choices": {"1": "Yes"}}]),
+            _make_survey("other", 20, items),
+        ])
+        findings = _check_variable_references(structure)
+        assert len(findings) == 0
+
+    def test_modified_system_column_not_flagged(self):
+        items = [
+            {"type": "number", "name": "x", "showif": "esm$modified"},
+        ]
+        structure = _make_structure([
+            _make_survey("esm", 10, [{"type": "mc", "name": "mood", "choices": {"1": "Good"}}]),
+            _make_survey("other", 20, items),
+        ])
+        findings = _check_variable_references(structure)
+        assert len(findings) == 0
+
 
 class TestBranchFlow:
     def test_valid_branch(self):
@@ -230,6 +252,13 @@ class TestCommonMistakes:
     def test_equality_comparison_not_flagged(self):
         structure = _make_structure([
             _make_branch("age == 18", 30, 10),
+        ])
+        findings = _check_common_mistakes(structure)
+        assert not any("assignment" in f["message"].lower() for f in findings)
+
+    def test_named_function_argument_not_flagged(self):
+        structure = _make_structure([
+            _make_branch("floor(as.numeric(difftime(now(), baseline$created, units='days'))) != 4", 30, 10),
         ])
         findings = _check_common_mistakes(structure)
         assert not any("assignment" in f["message"].lower() for f in findings)

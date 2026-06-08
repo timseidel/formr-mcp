@@ -267,6 +267,8 @@ def _check_variable_references(structure: dict) -> list[dict]:
         "externals", "shuffle",
     }
 
+    FORMR_SYSTEM_COLUMNS = {"created", "modified", "ended", "expired"}
+
     expressions = _extract_r_expressions(structure)
     seen_issues: set[tuple[str, str, str]] = set()
 
@@ -274,6 +276,8 @@ def _check_variable_references(structure: dict) -> list[dict]:
         refs = _extract_dollar_refs(source["expr"])
         for survey_name, var_name in refs:
             if survey_name in builtin_tables:
+                continue
+            if var_name in FORMR_SYSTEM_COLUMNS:
                 continue
             if survey_name not in survey_items:
                 key = (source["location"], survey_name, "missing_survey")
@@ -511,10 +515,13 @@ def _check_common_mistakes(structure: dict) -> list[dict]:
             if condition and condition.strip():
                 m = _ASSIGNMENT_IN_CONDITION_RE.search(condition)
                 if m and "^" not in condition:
-                    col = m.start() + 1
-                    char_before = condition[max(0, m.start()-1):m.start()]
-                    char_after = condition[m.end():m.end()+1] if m.end() < len(condition) else ""
-                    if char_before != "!" and char_after != "=":
+                    # The = sign is at m.end() - 1 (the match includes
+                    # an optional preceding char from [^=!<>] or ^).
+                    eq_pos = m.end() - 1
+                    char_before_eq = condition[eq_pos - 1] if eq_pos > 0 else ""
+                    char_after_eq = condition[eq_pos + 1] if eq_pos + 1 < len(condition) else ""
+                    is_named_arg = char_before_eq.isalnum() or char_before_eq == "_"
+                    if char_before_eq != "!" and char_after_eq != "=" and not is_named_arg:
                         findings.append({
                             "severity": "warning",
                             "message": f"{utype} at position {pos}: condition may contain "
