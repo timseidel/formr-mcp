@@ -1569,6 +1569,125 @@ Each Survey unit defines its items inline as JSON objects.
 """
 
 
+# ── Editing tools ─────────────────────────────────────────────────────
+
+@_topic("editing-tools", "How to use the editing tools for run structure changes")
+def _editing_tools():
+    return r"""# Editing Tools for Run Structures
+
+## Core Workflow: Fetch → Edit → Upload
+
+Always use the file-based workflow. Do NOT pass large JSON structures through tool call arguments.
+
+1. `get_run_structure_to_file("run-name")` — fetches to `.formr/run-name.json`
+2. Edit `.formr/run-name.json` with Read/Edit tools, or use the programmatic editing tools below
+3. `update_run_structure_from_file("run-name")` — validates and uploads
+
+On success, the backup (`.formr/run-name.json.bak`) is auto-removed.
+On validation error, fix the file and retry. If stuck, restore from `.bak`.
+
+## Programmatic Editing Tools
+
+For systematic changes, use the editing tools instead of manual JSON edits.
+All editing tools operate on `.formr/<name>.json` directly. Call `get_run_structure_to_file` first to ensure the file exists.
+
+### add_run_unit
+
+```
+add_run_unit(name, unit_type, position, **kwargs)
+```
+
+Add a unit to the run structure. If `insert_mode='shift'` (default) and the position is already occupied, all units at that position or higher are shifted up by 10. Position references (`if_true`, Wait `body`) in existing units are automatically updated.
+
+If `insert_mode='overwrite'`, any existing unit at the target position is replaced.
+
+Common kwargs by unit type:
+- **SkipForward/SkipBackward**: `condition` (R expr), `if_true` (int position), `automatically_jump` (0/1), `automatically_go_on` (0/1)
+- **Email**: `subject`, `body`, `account_id` (int), `recipient_field`, `cron_only` (0/1)
+- **Pause/Wait**: `wait_minutes`, `wait_until_time` ("HH:MM:SS"), `wait_until_date` ("YYYY-MM-DD"), `relative_to` (R expr), `body`
+- **Wait**: `body` is an integer position for click-through (NOT display content)
+- **Survey**: `study_id` (int) or `survey_data` (dict with name, items, settings)
+- **Endpage/Page**: `body` (markdown/knitr content)
+- **External**: `address` (URL or R code), `api_end` (0/1)
+
+### remove_run_unit
+
+```
+remove_run_unit(name, position, compact=False)
+```
+
+Remove a unit at the given position. If `compact=True`, shifts all units at higher positions down by **1** to fill the gap. Position references are automatically updated when compacting. Dangling references to the removed position are detected and reported as warnings.
+
+**Note**: Compact shifts by 1, not by the original spacing. This means removing position 20 from `[10, 20, 30]` produces `[10, 29]`, not `[10, 20]`. Use `renormalize_positions` afterwards to clean up to clean multiples of 10.
+
+### duplicate_run_units
+
+```
+duplicate_run_units(name, from_positions, to_start_position, shift_existing=True)
+```
+
+Copy units at `from_positions` to new positions starting at `to_start_position`, with gaps of 10 between copies. Copied units get a "copy: " prefix on their description (but the prefix won't stack on re-duplication).
+
+If `shift_existing=True` (default), any existing units at conflicting positions are shifted up to make room.
+
+Position references are remapped in three ways:
+1. **Internal**: References within the copied block point to the new corresponding positions
+2. **External shifted**: References in existing units that are shifted are updated
+3. **External unchanged**: References pointing outside both blocks are left as-is
+
+### shift_run_positions
+
+```
+shift_run_positions(name, from_position, delta)
+```
+
+Shift all units at positions >= `from_position` by `delta`. Positive delta shifts up (making room), negative shifts down (closing gaps). Position references (`if_true`, Wait `body`) are automatically updated.
+
+### renormalize_positions
+
+```
+renormalize_positions(name, spacing=10)
+```
+
+Renumber all unit positions to clean multiples of `spacing` (default 10) while preserving order. Assigns positions 10, 20, 30, ... based on current sorted order. All position references (`if_true`, Wait `body`) are automatically updated.
+
+This is essential after `remove_run_unit(compact=True)` which shifts by 1 and leaves messy positions like 10, 19, 29. Calling `renormalize_positions` cleans these up to 10, 20, 30.
+
+Safe to call on already-clean structures — if positions are already at clean multiples in the right order, no changes are made.
+
+### generate_survey_items
+
+```
+generate_survey_items(description, survey_name="survey", language="en")
+```
+
+Generate a survey items JSON array based on a description. Returns JSON text you can paste into your run structure. Does NOT modify any file.
+
+## Read-Only Inspection Tools
+
+These tools read from the local `.formr/<name>.json` file (call `get_run_structure_to_file` first):
+
+- **`summarize_run(name, detail)`** — human-readable overview. `detail="units"` for unit-level only, `detail="items"` (default) to include all survey items. Strips HTML from labels.
+- **`find_run_items(name, query?, item_type?)`** — search items by name/label substring and/or item type (e.g. `"mc"`, `"text"`, `"calculate"`).
+- **`analyze_run(name)`** — check for structural errors: R syntax validation, variable references, branch flow, Page/Endpage blocking, Wait body validation, item consistency, and common mistakes.
+
+## Position Management
+
+Positions are integers, typically spaced by 10 to allow insertions (10, 20, 30, ...).
+
+- **`add_run_unit`** auto-shifts by 10 to avoid collisions at the exact position, but only at that position. Planning positions with gaps is best practice.
+- **`remove_run_unit(compact=True)`** shifts by **1**, not by the original spacing. After compacting, positions like 10/20/30 become 10/19/29. Call `renormalize_positions` to clean up.
+- **`if_true`** (on Branch/SkipForward/SkipBackward) and **Wait `body`** contain position references. These are automatically updated by all editing tools:
+  - `add_run_unit` (shift mode) remaps references in existing units shifted up
+  - `remove_run_unit` (compact) remaps references and warns about dangling references
+  - `shift_run_positions` remaps references for all shifted units
+  - `renormalize_positions` remaps all position references to match new positions
+  - `duplicate_run_units` remaps internal references within the copied block, updates references in shifted existing units, and updates references in copies pointing to shifted external positions
+- **Wait `body`** is a position integer, not display content. Only Wait uses `body` as a position reference. Pause, Page, Endpage, and Email `body` fields are display content and are left unchanged by position remapping.
+- When a reference points to a removed position (dangling reference), `remove_run_unit` warns but does not delete or redirect it. Use `analyze_run` after edits to verify structural validity.
+"""
+
+
 # ── Best practices ──────────────────────────────────────────────────
 
 @_topic("best-practices", "Design patterns and recommendations")
