@@ -54,10 +54,13 @@ UNIT_SCHEMAS: dict[str, dict[str, list[str] | str]] = {
         "optional": ["description", "special", "study_id", "survey_data"],
         "description": "A survey/questionnaire presented to the participant.",
     },
+    # Page and Endpage are the same unit type in formr (class Page, type 'Endpage').
+    # When you create a 'Page' unit, formr normalizes its type to 'Endpage' on upload.
+    # Downloaded structures will always show type='Endpage'. Both are accepted here.
     "Page": {
         "required": ["type", "position"],
         "optional": ["description", "special", "body"],
-        "description": "A markdown page with optional R knitr rendering.",
+        "description": "A markdown page with optional R knitr rendering. NOTE: formr normalizes Page→Endpage on upload.",
     },
     "Email": {
         "required": ["type", "position"],
@@ -112,7 +115,7 @@ UNIT_SCHEMAS: dict[str, dict[str, list[str] | str]] = {
     "Endpage": {
         "required": ["type", "position"],
         "optional": ["description", "special", "body"],
-        "description": "End page displayed at the conclusion of a run.",
+        "description": "End page displayed at the conclusion of a run. Permanently ends the run session.",
     },
 }
 

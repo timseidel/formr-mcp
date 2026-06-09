@@ -15,7 +15,7 @@ from formr_mcp.utils import load_structure, save_structure
 from formr_mcp.validation import UNIT_SCHEMAS
 
 # Fields that must be integers
-INT_FIELDS = {"position", "if_true", "account_id", "cron_only", "automatically_jump", "automatically_go_on", "api_end", "expire_after"}
+INT_FIELDS = {"position", "if_true", "account_id", "cron_only", "automatically_jump", "automatically_go_on", "api_end", "expire_after", "groups", "time_to_live", "badge_count"}
 
 
 def _coerce_field(key: str, value: Any) -> Any:

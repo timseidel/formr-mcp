@@ -233,6 +233,12 @@ The participant moves from one position to the next unless a branch redirects th
 > continue, use `Pause` (not `Page`). If you need informational text followed by
 > more units, put it in a `Survey` note item or a `Pause` body — never a `Page`.
 
+> **Note on Page vs Endpage:** `Page` and `Endpage` are the same unit type in formr.
+> The PHP class is `Page` but the stored type is `'Endpage'`. When you create a `Page`
+> unit and upload it, formr normalizes the type to `Endpage`. Downloaded structures
+> will always show `type='Endpage'`. Use `Endpage` in your run structures — it's the
+> canonical name. `Page` is accepted as an alias.
+
 - **Branches redirect** — `Branch`, `SkipForward`, and `SkipBackward` use an R `condition` expression.
   If `TRUE`, the participant jumps to the `if_true` position.
 - **Surveys collect data** — a `Survey` unit links to a survey definition (either existing `study_id` or inline `survey_data`).
