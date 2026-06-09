@@ -520,16 +520,47 @@ def _check_common_mistakes(structure: dict) -> list[dict]:
 
 def analyze_run(name: str) -> str:
     structure = load_structure(name)
-    lines: list[str] = []
     units = structure.get("units", [])
     run_name = structure.get("name", name)
+
+    # Run all checks first to determine if there are any issues
+    expressions = _extract_r_expressions(structure)
+    var_findings = _check_variable_references(structure)
+    flow_findings = _check_branch_flow(structure)
+    item_findings = _check_item_consistency(structure)
+    mistake_findings = _check_common_mistakes(structure)
+
+    total_errors = (
+        sum(1 for f in var_findings if f["severity"] == "error")
+        + sum(1 for f in flow_findings if f["severity"] == "error")
+        + sum(1 for f in item_findings if f["severity"] == "error")
+        + sum(1 for f in mistake_findings if f["severity"] == "error")
+    )
+    total_warnings = (
+        sum(1 for f in var_findings if f["severity"] == "warning")
+        + sum(1 for f in flow_findings if f["severity"] == "warning")
+        + sum(1 for f in item_findings if f["severity"] == "warning")
+        + sum(1 for f in mistake_findings if f["severity"] == "warning")
+    )
+
+    # R syntax check
+    r_errors = 0
+    r_results = None
+    if expressions and _r_available():
+        r_results = _validate_r_syntax(list(dict.fromkeys(e["expr"] for e in expressions)))
+        r_errors = sum(1 for v in r_results.values() if v is not None)
+
+    # Short result for clean runs
+    if total_errors == 0 and total_warnings == 0 and r_errors == 0 and not (expressions and not _r_available()):
+        return f"✅ Run '{run_name}': no issues found (0 errors, 0 warnings)."
+
+    lines: list[str] = []
     lines.append(f"Run '{run_name}' — Analysis Report")
     lines.append(f"{'=' * 60}")
     lines.append("")
 
     # 1. R syntax validation
     lines.append("## R Syntax Validation")
-    expressions = _extract_r_expressions(structure)
     if not expressions:
         lines.append("  No R expressions found in this run.")
     elif _r_available():
@@ -538,7 +569,7 @@ def analyze_run(name: str) -> str:
         for e in expressions:
             expr_to_sources.setdefault(e["expr"], []).append(e["location"])
 
-        results = _validate_r_syntax(unique_exprs)
+        results = r_results or {}
         has_errors = any(v is not None for v in results.values())
         if not results:
             lines.append(f"  ⚠ R is available but validation returned no results.")
@@ -566,7 +597,6 @@ def analyze_run(name: str) -> str:
 
     # 2. Variable reference checker
     lines.append("## Variable References")
-    var_findings = _check_variable_references(structure)
     if not var_findings:
         lines.append("  ✅ All survey$variable references point to existing items.")
     else:
@@ -577,7 +607,6 @@ def analyze_run(name: str) -> str:
 
     # 3. Branch flow validator
     lines.append("## Branch Flow")
-    flow_findings = _check_branch_flow(structure)
     if not flow_findings:
         lines.append("  ✅ All branch targets are valid, no unreachable units detected.")
     else:
@@ -588,7 +617,6 @@ def analyze_run(name: str) -> str:
 
     # 4. Item consistency checker
     lines.append("## Item Consistency")
-    item_findings = _check_item_consistency(structure)
     if not item_findings:
         lines.append("  ✅ All item references are consistent.")
     else:
@@ -599,7 +627,6 @@ def analyze_run(name: str) -> str:
 
     # 5. Common mistakes
     lines.append("## Common Mistakes")
-    mistake_findings = _check_common_mistakes(structure)
     if not mistake_findings:
         lines.append("  ✅ No common mistakes detected.")
     else:
@@ -609,23 +636,6 @@ def analyze_run(name: str) -> str:
     lines.append("")
 
     # Summary
-    total_errors = (
-        sum(1 for f in var_findings if f["severity"] == "error")
-        + sum(1 for f in flow_findings if f["severity"] == "error")
-        + sum(1 for f in item_findings if f["severity"] == "error")
-        + sum(1 for f in mistake_findings if f["severity"] == "error")
-    )
-    total_warnings = (
-        sum(1 for f in var_findings if f["severity"] == "warning")
-        + sum(1 for f in flow_findings if f["severity"] == "warning")
-        + sum(1 for f in item_findings if f["severity"] == "warning")
-        + sum(1 for f in mistake_findings if f["severity"] == "warning")
-    )
-    r_errors = 0
-    if expressions and _r_available():
-        results = _validate_r_syntax(list(dict.fromkeys(e["expr"] for e in expressions)))
-        r_errors = sum(1 for v in results.values() if v is not None)
-
     lines.append(f"{'=' * 60}")
     lines.append(f"Summary: {r_errors} R syntax errors, {total_errors} errors, {total_warnings} warnings")
     if not _r_available() and expressions:

@@ -72,14 +72,9 @@ mcp = FastMCP(
     instructions="""You help design and manage formr survey runs and their structure.
 
 SETUP: The user must configure a .env file with formr API credentials:
-  FORMR_BASE_URL     — formr instance URL (e.g. http://localhost)
-  FORMR_CLIENT_ID    — 32-char hex client ID from /admin/account#api
-  FORMR_CLIENT_SECRET — 64-char hex secret from /admin/account#api
+  FORMR_BASE_URL, FORMR_CLIENT_ID, FORMR_CLIENT_SECRET
 Required scopes: survey:read, run:read, run:write, data:read (admin >= 2).
 If tools return auth errors, the .env file is missing or misconfigured.
-
-Optional:
-  FLOWCHART_URL — URL of the formr Flowchart Generator (default: https://formr-flowchart-test.pages.dev)
 
 formr is a survey framework for psychology research. Runs are ordered
 compositions of units (Surveys, Pages, Emails, Branches, etc.) where
@@ -87,39 +82,9 @@ execution flows by position number. Branching uses R expressions in
 `condition` and jumps to the `if_true` position.
 
 WORKFLOW — Always use the file-based workflow for run structures:
-
-  1. Fetch:  get_run_structure_to_file("run-name")
-     Writes .formr/run-name.json. If it already exists, the previous
-     version is backed up to .formr/run-name.json.bak.
-
-  2. Edit:   Use Read/Edit tools on .formr/run-name.json directly.
-     Change positions, add/remove units, update survey items, etc.
-
-  3. Upload: update_run_structure_from_file("run-name")
-     Reads .formr/run-name.json, validates, and uploads to formr.
-     On validation errors: fix the file and retry.
-     On success: the .bak file is removed; re-fetch when needed.
-
-Available tools:
-  get_run_structure_to_file(name) — fetch run structure to .formr/<name>.json
-  update_run_structure_from_file(name) — upload from .formr/<name>.json
-  update_run_settings(name, settings) — change run-level settings
-  get_run(name) — run metadata (not structure)
-  list_runs(name?) — list/filter runs
-  create_run(name) — create new empty run
-  delete_run(name, confirm) — delete a run and all data
-  get_unit_types() — unit type schemas
-  get_documentation(topic) — learn survey design
-  get_documentation_topics() — list available topics
-  summarize_run(name, detail) — readable summary of run structure (detail: 'units' or 'items')
-  find_run_items(name, query?, item_type?) — search items across surveys by name/label/type
-  analyze_run(name) — check R syntax, variable refs, branch flow, item consistency, common mistakes
-  add_run_unit(name, unit_type, position, **kwargs) — add a unit to the local file
-  remove_run_unit(name, position, compact?) — remove a unit from the local file
-  duplicate_run_units(name, from_positions, to_start_position) — copy units to new positions
-  shift_run_positions(name, from_position, delta) — shift units to make room or close gaps
-  generate_survey_items(description, survey_name?, language?) — generate items JSON from a description
-  open_flowchart(name) — upload run structure and get a shareable flowchart URL""",
+  1. Fetch:  get_run_structure_to_file(name) → .formr/<name>.json (backs up existing)
+  2. Edit:   Use Read/Edit tools on .formr/<name>.json
+  3. Upload: update_run_structure_from_file(name) → validates and uploads""",
 )
 
 
@@ -153,18 +118,10 @@ async def create_run(name: str, ctx: Context = None) -> dict:
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True, idempotentHint=False, openWorldHint=False))
-async def delete_run(name: str, confirm: bool = False, ctx: Context = None) -> str:
+async def delete_run(name: str, ctx: Context = None) -> str:
     """Permanently delete a run and all its data.
-
-    Safety: call without `confirm` first to get a warning,
-    then call again with `confirm=True` once the user has approved.
     """
     validate_run_name(name)
-    if not confirm:
-        return (
-            f"⚠️  This will permanently delete run '{name}' and all collected data. "
-            f"This cannot be undone. Call again with `confirm=True` to proceed."
-        )
     await _client(ctx).delete_run(name)
     return f"Run '{name}' has been deleted."
 
@@ -180,12 +137,9 @@ async def get_run(name: str, ctx: Context = None) -> dict:
 async def update_run_settings(name: str, settings: dict, ctx: Context = None) -> dict:
     """Update a run's settings. Pass only the settings you want to change.
 
-    Available settings: title, description, footer_text, public_blurb,
-    privacy, tos, header_image_path, custom_css, custom_js, custom_r,
-    cron_active, use_material_design, expiresOn,
-    expire_cookie_value, expire_cookie_unit,
-    public (0=admin/test-users only, 2=accessible with link; 1 and 3 are rarely used),
-    locked (0/1).
+    Common settings: title, description, public (0=admin/test-only, 2=link-accessible), locked (0/1),
+    custom_css, custom_js, custom_r, cron_active, expiresOn, footer_text, public_blurb, privacy,
+    tos, header_image_path, use_material_design, expire_cookie_value, expire_cookie_unit.
 
     Returns the full updated run with all settings.
     """
@@ -194,7 +148,7 @@ async def update_run_settings(name: str, settings: dict, ctx: Context = None) ->
     if unknown:
         raise ValueError(
             f"Unknown settings: {', '.join(sorted(unknown))}. "
-            f"Valid settings: {', '.join(sorted(VALID_SETTINGS))}"
+            f"See update_run_settings description for valid keys."
         )
     client = _client(ctx)
     await client.patch_run(name, settings)
@@ -355,20 +309,16 @@ def add_run_unit(name: str, unit_type: str, position: int, description: str = ""
                 insert_mode: str = "shift", ctx: Context = None, **kwargs) -> str:
     """Add a unit to a local run structure file. The file must exist (fetch with get_run_structure_to_file first).
 
-    Unit types: Survey, Page, Email, Branch, SkipForward, SkipBackward, External, Pause, Wait, Shuffle, PushMessage, Privacy, Endpage.
+    Kwargs by unit type (see get_unit_types() for full schema):
+      Branch/SkipForward/SkipBackward: condition (R expr), if_true (int position)
+      Email: subject, body, account_id (int), recipient_field
+      Survey: study_id (int) or survey_data (dict)
+      External: address (URL or R code)
+      Wait: body (int position — NOT display content)
+      Page/Endpage: body (markdown)
+      Pause: wait_minutes, wait_until_time, wait_until_date, relative_to
 
-    Common kwargs by unit type:
-    - SkipForward/SkipBackward: condition (R expr), if_true (int position), automatically_jump (0/1), automatically_go_on (0/1)
-    - Email: subject, body, account_id (int), recipient_field, cron_only (0/1)
-    - Pause/Wait: wait_minutes, wait_until_time ("HH:MM:SS"), wait_until_date ("YYYY-MM-DD"), relative_to (R expr), body
-    - Wait: body is an integer position for click-through (NOT display content)
-    - Survey: study_id (int) or survey_data (dict with name, items, settings)
-    - Endpage/Page: body (markdown/knitr content)
-    - External: address (URL or R code), api_end (0/1)
-
-    insert_mode: 'shift' (default) shifts existing units at >= position up by 10. 'overwrite' replaces any existing unit at that position.
-    When shifting, position references (if_true, Wait body) in existing units are
-    automatically updated to reflect new positions.
+    insert_mode: 'shift' (default) shifts units at >= position up by 10; 'overwrite' replaces. Position references are auto-remapped.
     """
     validate_run_name(name)
     return editing_add_run_unit(name, unit_type, position, description=description,
@@ -381,11 +331,7 @@ def remove_run_unit(name: str, position: int, compact: bool = False, ctx: Contex
 
     The file must exist (fetch with get_run_structure_to_file first).
     After removing, call update_run_structure_from_file to upload.
-
-    If compact is True, shifts all units at higher positions down by 1 to fill the gap.
-    Position references (if_true on Branch/Skip units, body on Wait units) are
-    automatically updated when compacting. Dangling references to the removed
-    position are detected and reported as warnings.
+    compact=True shifts higher positions down by 1 and remaps references; dangling references are reported.
     """
     validate_run_name(name)
     return editing_remove_run_unit(name, position, compact=compact)
@@ -396,18 +342,9 @@ def duplicate_run_units(name: str, from_positions: list[int], to_start_position:
                         shift_existing: bool = True, ctx: Context = None) -> str:
     """Copy units at from_positions to new positions starting at to_start_position in the local run structure file.
 
-    Copies units in their original order, assigning new positions starting at
-    to_start_position with gaps of 10 (e.g., 100, 110, 120...).
-
-    If shift_existing is True (default), any existing units at conflicting positions
-    are shifted up to make room. Set shift_existing=False to error on conflicts instead.
-
-    Position references (if_true, Wait body) are automatically remapped:
-    - Internal references within the copied block point to the new positions.
-    - References in existing units that are shifted are updated accordingly.
-    - References in copies pointing to shifted external positions are also updated.
-
-    The file must exist (fetch with get_run_structure_to_file first).
+    Copies units in original order with gaps of 10 (e.g., 100, 110, 120...).
+    shift_existing=True (default) shifts conflicting units up; False errors on conflicts.
+    Position references are automatically remapped. The file must exist (fetch with get_run_structure_to_file first).
     """
     validate_run_name(name)
     return editing_duplicate_run_units(name, from_positions, to_start_position,
@@ -418,13 +355,8 @@ def duplicate_run_units(name: str, from_positions: list[int], to_start_position:
 def shift_run_positions(name: str, from_position: int, delta: int, ctx: Context = None) -> str:
     """Shift all units at positions >= from_position by delta in the local run structure file.
 
-    Positive delta shifts positions up (making room for new units).
-    Negative delta shifts positions down (closing gaps after removal).
-
-    Position references (if_true on Branch/Skip units, body on Wait units) are
-    automatically updated to reflect the new positions.
-
-    The file must exist (fetch with get_run_structure_to_file first).
+    Positive delta shifts up (making room), negative shifts down (closing gaps).
+    Position references are automatically remapped. The file must exist (fetch with get_run_structure_to_file first).
     """
     validate_run_name(name)
     return editing_shift_run_positions(name, from_position, delta)
@@ -434,16 +366,8 @@ def shift_run_positions(name: str, from_position: int, delta: int, ctx: Context 
 def renormalize_positions(name: str, spacing: int = 10, ctx: Context = None) -> str:
     """Renumber all unit positions to clean multiples of spacing while preserving order.
 
-    Assigns new positions: spacing, spacing*2, spacing*3, ... based on the current
-    sorted order. All position references (if_true on Branch/Skip units, body on
-    Wait units) are automatically updated to reflect the new positions.
-
-    Useful after a series of edits that leave positions with gaps or irregular spacing
-    (e.g., after compact removal which shifts by 1 instead of the standard 10).
-
-    Safe to call on already-clean structures — positions already at clean multiples
-    of spacing that are in the right order will remain (or nearly remain) the same.
-
+    Safe to call on already-clean structures. Position references are automatically remapped.
+    Useful after edits that leave gaps (e.g., compact removal shifts by 1).
     The file must exist (fetch with get_run_structure_to_file first).
     """
     validate_run_name(name)
@@ -468,21 +392,15 @@ def generate_survey_items(description: str, survey_name: str = "survey",
                                           language=language)
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=True, idempotentHint=False, openWorldHint=True))
 async def open_flowchart(name: str, ctx: Context = None) -> str:
     """Open a flowchart visualization of a run in the browser.
 
-    Uploads the local run structure to the formr Flowchart Generator and returns
-    a shareable URL. The recipient can open the URL to see an interactive flowchart
-    of the run structure — no login or file export needed.
-
-    The run structure must have been fetched first with get_run_structure_to_file.
-
-    The share link expires after 24 hours.
-
-    The URL is automatically opened in the default browser (via webbrowser.open).
+    Uploads the local run structure to the formr Flowchart Generator (an external
+    Cloudflare Worker) and returns a shareable URL. The link expires after 24 hours.
     """
     validate_run_name(name)
+
     filepath = run_filepath(name)
 
     if not filepath.exists():
@@ -517,12 +435,7 @@ async def open_flowchart(name: str, ctx: Context = None) -> str:
 
     webbrowser.open(result["url"])
 
-    return (
-        f"Flowchart link for run '{name}' (expires in 24 hours):\n\n"
-        f"  {result['url']}\n\n"
-        f"Open this URL in a browser to view the interactive flowchart. "
-        f"Pan with mouse drag, zoom with scroll wheel."
-    )
+    return f"Flowchart link for run '{name}' (expires in 24h):\n\n  {result['url']}"
 
 
 if __name__ == "__main__":
