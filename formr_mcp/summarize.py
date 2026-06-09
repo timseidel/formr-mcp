@@ -5,23 +5,7 @@ import re
 from pathlib import Path
 from typing import Literal
 
-WORKSPACE_DIR = Path(".formr")
-
-VALID_NAME = re.compile(r"^[a-z][a-z0-9-]{2,254}$")
-
-
-def _safe_path(name: str) -> Path:
-    if not VALID_NAME.match(name):
-        raise ValueError(
-            f"Invalid run name '{name}'. "
-            f"Name must start with a letter, contain only a-z, 0-9, hyphens, "
-            f"and be 3-255 characters long."
-        )
-    path = (WORKSPACE_DIR / f"{name}.json").resolve()
-    workspace_resolved = WORKSPACE_DIR.resolve()
-    if not str(path).startswith(str(workspace_resolved)):
-        raise ValueError("Path traversal detected: file path escapes workspace directory")
-    return path
+from formr_mcp.utils import safe_run_filepath, validate_run_name
 
 
 def _strip_html(text: str) -> str:
@@ -55,7 +39,7 @@ def summarize_run_structure(
     name: str,
     detail: Literal["units", "items"] = "items",
 ) -> str:
-    filepath = _safe_path(name)
+    filepath = safe_run_filepath(name)
     if not filepath.exists():
         raise FileNotFoundError(
             f"No local file for run '{name}'. "
@@ -181,7 +165,7 @@ def find_items(
     query: str | None = None,
     item_type: str | None = None,
 ) -> str:
-    filepath = _safe_path(name)
+    filepath = safe_run_filepath(name)
     if not filepath.exists():
         raise FileNotFoundError(
             f"No local file for run '{name}'. "

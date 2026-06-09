@@ -1,15 +1,10 @@
 from __future__ import annotations
 
-import json
-import os
 import re
 import subprocess
-from pathlib import Path
 from typing import Any
 
-WORKSPACE_DIR = Path(".formr")
-
-VALID_NAME = re.compile(r"^[a-z][a-z0-9-]{2,254}$")
+from formr_mcp.utils import load_structure, validate_run_name
 
 _R_AVAILABLE: bool | None = None
 
@@ -28,29 +23,7 @@ def _r_available() -> bool:
     return _R_AVAILABLE
 
 
-def _safe_path(name: str) -> Path:
-    if not VALID_NAME.match(name):
-        raise ValueError(
-            f"Invalid run name '{name}'. "
-            f"Name must start with a letter, contain only a-z, 0-9, hyphens, "
-            f"and be 3-255 characters long."
-        )
-    path = (WORKSPACE_DIR / f"{name}.json").resolve()
-    workspace_resolved = WORKSPACE_DIR.resolve()
-    if not str(path).startswith(str(workspace_resolved)):
-        raise ValueError("Path traversal detected: file path escapes workspace directory")
-    return path
 
-
-def _load_structure(name: str) -> dict:
-    filepath = _safe_path(name)
-    if not filepath.exists():
-        raise FileNotFoundError(
-            f"No local file for run '{name}'. "
-            f"Call get_run_structure_to_file(\"{name}\") first."
-        )
-    with open(filepath) as f:
-        return json.load(f)
 
 
 # ── R expression extraction ──────────────────────────────────────────
@@ -546,7 +519,7 @@ def _check_common_mistakes(structure: dict) -> list[dict]:
 # ── Main analysis function ───────────────────────────────────────────
 
 def analyze_run(name: str) -> str:
-    structure = _load_structure(name)
+    structure = load_structure(name)
     lines: list[str] = []
     units = structure.get("units", [])
     run_name = structure.get("name", name)

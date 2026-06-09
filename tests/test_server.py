@@ -7,10 +7,11 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 
-sys.path.insert(0, "/Users/admin/Documents/repos/formr-mcp")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import server as server_mod
-from server import VALID_SETTINGS, run_filepath, _normalize_survey_choices
+from server import VALID_SETTINGS, _normalize_survey_choices
+from formr_mcp.utils import run_filepath
 
 
 class TestValidSettings:
@@ -47,7 +48,7 @@ class TestRunFilepath:
         assert str(path).endswith(".formr/my-run.json")
 
     def test_creates_workspace_dir(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(server_mod, "WORKSPACE_DIR", tmp_path / "ws")
+        monkeypatch.setattr("formr_mcp.utils.WORKSPACE_DIR", tmp_path / "ws")
         path = server_mod.run_filepath("test-run")
         assert (tmp_path / "ws").is_dir()
         assert path.name == "test-run.json"
@@ -72,7 +73,7 @@ class TestRunFilepath:
 
 class TestGetRunStructureToFile:
     def test_creates_file_and_writes_structure(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(server_mod, "WORKSPACE_DIR", tmp_path / "ws")
+        monkeypatch.setattr("formr_mcp.utils.WORKSPACE_DIR", tmp_path / "ws")
 
         mock_client = AsyncMock()
         mock_client.get_run_structure.return_value = {
@@ -90,7 +91,7 @@ class TestGetRunStructureToFile:
         assert len(data["units"]) == 1
 
     def test_backs_up_existing_file(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(server_mod, "WORKSPACE_DIR", tmp_path / "ws")
+        monkeypatch.setattr("formr_mcp.utils.WORKSPACE_DIR", tmp_path / "ws")
 
         filepath = server_mod.run_filepath("demo")
         filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -109,7 +110,7 @@ class TestGetRunStructureToFile:
         assert json.loads(bak.read_text()) == {"old": True}
 
     def test_no_backup_when_no_existing_file(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(server_mod, "WORKSPACE_DIR", tmp_path / "ws")
+        monkeypatch.setattr("formr_mcp.utils.WORKSPACE_DIR", tmp_path / "ws")
 
         mock_client = AsyncMock()
         mock_client.get_run_structure.return_value = {"units": []}
@@ -125,7 +126,7 @@ class TestGetRunStructureToFile:
 
 class TestUpdateRunStructureFromFile:
     def test_raises_when_file_missing(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(server_mod, "WORKSPACE_DIR", tmp_path / "ws")
+        monkeypatch.setattr("formr_mcp.utils.WORKSPACE_DIR", tmp_path / "ws")
 
         with pytest.raises(FileNotFoundError, match="No local file"):
             asyncio.run(
@@ -133,7 +134,7 @@ class TestUpdateRunStructureFromFile:
             )
 
     def test_removes_bak_on_success(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(server_mod, "WORKSPACE_DIR", tmp_path / "ws")
+        monkeypatch.setattr("formr_mcp.utils.WORKSPACE_DIR", tmp_path / "ws")
 
         filepath = server_mod.run_filepath("demo")
         filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -160,7 +161,7 @@ class TestUpdateRunStructureFromFile:
         assert not bak.exists()
 
     def test_validation_error_preserves_file(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(server_mod, "WORKSPACE_DIR", tmp_path / "ws")
+        monkeypatch.setattr("formr_mcp.utils.WORKSPACE_DIR", tmp_path / "ws")
 
         filepath = server_mod.run_filepath("bad-run")
         filepath.parent.mkdir(parents=True, exist_ok=True)

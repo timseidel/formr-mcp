@@ -18,8 +18,8 @@ from formr_mcp.editing import (
     remove_run_unit,
     renormalize_positions,
     shift_run_positions,
-    WORKSPACE_DIR,
 )
+from formr_mcp.utils import WORKSPACE_DIR
 
 
 @pytest.fixture
@@ -27,7 +27,7 @@ def run_file(tmp_path, monkeypatch):
     """Create a temporary .formr/ directory and a test run file."""
     workspace = tmp_path / ".formr"
     workspace.mkdir()
-    monkeypatch.setattr("formr_mcp.editing.WORKSPACE_DIR", workspace)
+    monkeypatch.setattr("formr_mcp.utils.WORKSPACE_DIR", workspace)
     return workspace
 
 

@@ -9,13 +9,9 @@ from __future__ import annotations
 
 import copy
 import json
-import re
-from pathlib import Path
 from typing import Any
 
-WORKSPACE_DIR = Path(".formr")
-
-VALID_NAME = re.compile(r"^[a-z][a-z0-9-]{2,254}$")
+from formr_mcp.utils import load_structure, save_structure
 
 # Unit type → required + optional fields (mirrors validation.py schemas)
 UNIT_SCHEMAS: dict[str, dict[str, list[str]]] = {
@@ -77,48 +73,6 @@ VALID_UNIT_TYPES = list(UNIT_SCHEMAS.keys())
 
 # Fields that must be integers
 INT_FIELDS = {"position", "if_true", "account_id", "cron_only", "automatically_jump", "automatically_go_on", "api_end", "expire_after"}
-
-
-def _validate_run_name(name: str) -> None:
-    if not VALID_NAME.match(name):
-        raise ValueError(
-            f"Invalid run name '{name}'. "
-            f"Name must start with a letter, contain only a-z, 0-9, hyphens, "
-            f"and be 3-255 characters long."
-        )
-
-
-def _safe_path(name: str) -> Path:
-    _validate_run_name(name)
-    path = (WORKSPACE_DIR / f"{name}.json").resolve()
-    workspace_resolved = WORKSPACE_DIR.resolve()
-    if not str(path).startswith(str(workspace_resolved)):
-        raise ValueError("Path traversal detected: file path escapes workspace directory")
-    return path
-
-
-def _load(name: str) -> dict:
-    path = _safe_path(name)
-    if not path.exists():
-        raise FileNotFoundError(
-            f"No local file for run '{name}'. "
-            f"Call get_run_structure_to_file(\"{name}\") first."
-        )
-    with open(path) as f:
-        return json.load(f)
-
-
-def _save(name: str, structure: dict) -> str:
-    path = _safe_path(name)
-    # Backup existing file
-    bak_path = path.with_suffix(".json.bak")
-    if path.exists():
-        import shutil
-        shutil.copy2(str(path), str(bak_path))
-    with open(path, "w") as f:
-        json.dump(structure, f, indent=4, ensure_ascii=False)
-    units = len(structure.get("units", []))
-    return f"Saved {units} units to {path}"
 
 
 def _coerce_field(key: str, value: Any) -> Any:
@@ -257,7 +211,7 @@ def add_run_unit(name: str, unit_type: str, position: int, **kwargs) -> str:
     automatically updated to reflect the new positions.
     """
     insert_mode = kwargs.pop("insert_mode", "shift")
-    structure = _load(name)
+    structure = load_structure(name)
     units = structure.get("units", [])
 
     unit = _build_unit(unit_type, position, **kwargs)
@@ -284,7 +238,7 @@ def add_run_unit(name: str, unit_type: str, position: int, **kwargs) -> str:
     units.sort(key=lambda u: u.get("position", 0))
     structure["units"] = units
 
-    saved = _save(name, structure)
+    saved = save_structure(name, structure)
     desc = unit.get("description", "")
     return (
         f"Added {unit_type} at position {position}"
@@ -301,7 +255,7 @@ def remove_run_unit(name: str, position: int, compact: bool = False) -> str:
     When compacting, position references (if_true, Wait body) are automatically
     updated. Dangling references to the removed position are detected and reported.
     """
-    structure = _load(name)
+    structure = load_structure(name)
     units = structure.get("units", [])
 
     removed = None
@@ -331,7 +285,7 @@ def remove_run_unit(name: str, position: int, compact: bool = False) -> str:
     warnings.extend(dangling)
 
     structure["units"] = remaining
-    saved = _save(name, structure)
+    saved = save_structure(name, structure)
 
     unit_type = removed.get("type", "?")
     desc = removed.get("description", "")
@@ -362,7 +316,7 @@ def duplicate_run_units(name: str, from_positions: list[int], to_start_position:
     2. References in existing units that are shifted are updated to reflect new positions.
     3. References in copied units pointing to shifted external positions are updated.
     """
-    structure = _load(name)
+    structure = load_structure(name)
     units = structure.get("units", [])
 
     units_by_pos = {u.get("position"): u for u in units if isinstance(u.get("position"), int)}
@@ -447,7 +401,7 @@ def duplicate_run_units(name: str, from_positions: list[int], to_start_position:
 
     units.sort(key=lambda u: u.get("position", 0))
     structure["units"] = units
-    saved = _save(name, structure)
+    saved = save_structure(name, structure)
 
     parts = [
         f"Duplicated {len(source_units)} unit(s) from positions "
@@ -473,7 +427,7 @@ def shift_run_positions(name: str, from_position: int, delta: int) -> str:
     if delta == 0:
         return "No change: delta is 0."
 
-    structure = _load(name)
+    structure = load_structure(name)
     units = structure.get("units", [])
 
     position_map: dict[int, int] = {}
@@ -492,7 +446,7 @@ def shift_run_positions(name: str, from_position: int, delta: int) -> str:
 
     units.sort(key=lambda u: u.get("position", 0))
     structure["units"] = units
-    saved = _save(name, structure)
+    saved = save_structure(name, structure)
 
     direction = "up" if delta > 0 else "down"
     parts = [f"Shifted {affected} unit(s) at positions >= {from_position} {direction} by {abs(delta)}."]
@@ -518,7 +472,7 @@ def renormalize_positions(name: str, spacing: int = 10) -> str:
     if spacing < 1:
         raise ValueError(f"spacing must be >= 1, got {spacing}")
 
-    structure = _load(name)
+    structure = load_structure(name)
     units = structure.get("units", [])
     if not units:
         return "No units to renormalize."
@@ -548,7 +502,7 @@ def renormalize_positions(name: str, spacing: int = 10) -> str:
     ref_updated = _update_position_references(sorted_units, position_map)
 
     structure["units"] = sorted_units
-    saved = _save(name, structure)
+    saved = save_structure(name, structure)
 
     parts = [f"Renormalized {len(sorted_units)} unit(s) to positions {spacing}, {spacing*2}, ..."]
     if position_map:

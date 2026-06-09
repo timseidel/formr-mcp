@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import webbrowser
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import AsyncIterator
 
 from dotenv import load_dotenv
@@ -26,6 +24,10 @@ from formr_mcp.editing import (
     shift_run_positions as editing_shift_run_positions,
 )
 from formr_mcp.summarize import find_items, summarize_run_structure
+from formr_mcp.utils import (
+    run_filepath,
+    validate_run_name,
+)
 from formr_mcp.validation import get_unit_type_schemas, validate_structure
 
 dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
@@ -35,9 +37,6 @@ BASE_URL = os.getenv("FORMR_BASE_URL", "")
 CLIENT_ID = os.getenv("FORMR_CLIENT_ID", "")
 CLIENT_SECRET = os.getenv("FORMR_CLIENT_SECRET", "")
 FLOWCHART_URL = os.getenv("FLOWCHART_URL", "https://formr-flowchart-test.tim-seidel.workers.dev")
-WORKSPACE_DIR = Path(".formr")
-
-VALID_NAME = re.compile(r"^[a-z][a-z0-9-]{2,254}$")
 
 VALID_SETTINGS = {
     "title", "description", "footer_text", "public_blurb",
@@ -45,30 +44,6 @@ VALID_SETTINGS = {
     "custom_r", "cron_active", "use_material_design", "expiresOn",
     "expire_cookie_value", "expire_cookie_unit", "public", "locked",
 }
-
-
-def validate_run_name(name: str) -> None:
-    if not VALID_NAME.match(name):
-        raise ValueError(
-            f"Invalid run name '{name}'. "
-            f"Name must start with a letter, contain only a-z, 0-9, hyphens, "
-            f"and be 3-255 characters long."
-        )
-
-
-def safe_run_filepath(name: str) -> Path:
-    validate_run_name(name)
-    path = (WORKSPACE_DIR / f"{name}.json").resolve()
-    workspace_resolved = WORKSPACE_DIR.resolve()
-    if not str(path).startswith(str(workspace_resolved)):
-        raise ValueError("Path traversal detected: file path escapes workspace directory")
-    return path
-
-
-def run_filepath(name: str) -> Path:
-    path = safe_run_filepath(name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return path
 
 
 @asynccontextmanager

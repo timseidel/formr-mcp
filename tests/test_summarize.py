@@ -117,9 +117,9 @@ SAMPLE_RUN = {
 
 @pytest.fixture
 def run_file(tmp_path, monkeypatch):
-    import formr_mcp.summarize as mod
+    import formr_mcp.utils as utils_mod
 
-    monkeypatch.setattr(mod, "WORKSPACE_DIR", tmp_path / "ws")
+    monkeypatch.setattr("formr_mcp.utils.WORKSPACE_DIR", tmp_path / "ws")
     filepath = tmp_path / "ws" / "test-run.json"
     filepath.parent.mkdir(parents=True, exist_ok=True)
     filepath.write_text(json.dumps(SAMPLE_RUN))
@@ -191,9 +191,7 @@ class TestSummarizeRunStructure:
         assert "= mean(bfi_e_1)" in result
 
     def test_file_not_found(self, tmp_path, monkeypatch):
-        import formr_mcp.summarize as mod
-
-        monkeypatch.setattr(mod, "WORKSPACE_DIR", tmp_path / "nonexistent")
+        monkeypatch.setattr("formr_mcp.utils.WORKSPACE_DIR", tmp_path / "nonexistent")
         with pytest.raises(FileNotFoundError, match="No local file"):
             summarize_run_structure("missing")
 
@@ -239,9 +237,7 @@ class TestFindItems:
         assert "bfi_e_1" in result
 
     def test_file_not_found(self, tmp_path, monkeypatch):
-        import formr_mcp.summarize as mod
-
-        monkeypatch.setattr(mod, "WORKSPACE_DIR", tmp_path / "nonexistent")
+        monkeypatch.setattr("formr_mcp.utils.WORKSPACE_DIR", tmp_path / "nonexistent")
         with pytest.raises(FileNotFoundError, match="No local file"):
             find_items("missing")
 

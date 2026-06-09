@@ -1,5 +1,6 @@
+import os
 import sys
-sys.path.insert(0, "/Users/admin/Documents/repos/formr-mcp")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from server import _normalize_survey_choices
 
