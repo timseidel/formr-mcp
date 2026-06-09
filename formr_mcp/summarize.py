@@ -46,7 +46,7 @@ def summarize_run_structure(
             f"Call get_run_structure_to_file(\"{name}\") first."
         )
 
-    with open(filepath) as f:
+    with open(filepath, encoding="utf-8") as f:
         data = json.load(f)
 
     units = data.get("units", [])
@@ -172,7 +172,7 @@ def find_items(
             f"Call get_run_structure_to_file(\"{name}\") first."
         )
 
-    with open(filepath) as f:
+    with open(filepath, encoding="utf-8") as f:
         data = json.load(f)
 
     units = data.get("units", [])

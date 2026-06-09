@@ -60,7 +60,7 @@ def load_structure(name: str) -> dict:
             f"No local file for run '{name}'. "
             f"Call get_run_structure_to_file(\"{name}\") first."
         )
-    with open(filepath) as f:
+    with open(filepath, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -73,7 +73,7 @@ def save_structure(name: str, structure: dict) -> str:
     bak_path = path.with_suffix(".json.bak")
     if path.exists():
         shutil.copy2(str(path), str(bak_path))
-    with open(path, "w") as f:
-        json.dump(structure, f, indent=4, ensure_ascii=False)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(structure, f, indent=2, ensure_ascii=False)
     units = len(structure.get("units", []))
     return f"Saved {units} units to {path}"

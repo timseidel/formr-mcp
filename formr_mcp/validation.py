@@ -28,12 +28,9 @@ CHOICES_FORBIDDEN = {
     "request_phone", "timezone",
 }
 
-# Items where choices are allowed but not required
-# (PHP $hasChoices = true but has a validation exception or auto-generates)
-CHOICES_OPTIONAL = {
-    "select_or_add_multiple",
-    "sex",
-}
+# Items where choices are allowed but not required are not explicitly
+# listed — they pass through validation without error in either case.
+# This includes: select_or_add_multiple, sex
 
 KNOWN_ITEM_TYPES = {
     "note", "note_iframe", "block", "submit",
@@ -194,9 +191,9 @@ def validate_survey_data(survey_data: object, unit_label: str) -> list[str]:
             )
 
         type_options = item.get("type_options")
-        if type_options is not None and not isinstance(type_options, (str, type(None))):
+        if type_options is not None and not isinstance(type_options, (str, dict, type(None))):
             errors.append(
-                f"{unit_label}: item '{item_name or j}': 'type_options' must be a string or null"
+                f"{unit_label}: item '{item_name or j}': 'type_options' must be a string, object, or null"
             )
 
     settings = survey_data.get("settings")

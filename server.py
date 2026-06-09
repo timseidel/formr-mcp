@@ -180,7 +180,7 @@ async def get_run_structure_to_file(name: str, ctx: Context = None) -> str:
 
     structure = await client.get_run_structure(name)
 
-    with open(filepath, "w") as f:
+    with open(filepath, "w", encoding="utf-8") as f:
         json.dump(structure, f, indent=2)
 
     units = len(structure.get("units", []))
@@ -226,7 +226,7 @@ async def update_run_structure_from_file(name: str, ctx: Context = None) -> str:
 
     client = _client(ctx)
 
-    with open(filepath) as f:
+    with open(filepath, encoding="utf-8") as f:
         structure = json.load(f)
 
     _normalize_survey_choices(structure)
@@ -409,7 +409,7 @@ async def open_flowchart(name: str, ctx: Context = None) -> str:
             f"Call get_run_structure_to_file(\"{name}\") first."
         )
 
-    with open(filepath) as f:
+    with open(filepath, encoding="utf-8") as f:
         structure = json.load(f)
 
     if not isinstance(structure, dict) or "units" not in structure:
