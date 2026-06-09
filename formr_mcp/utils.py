@@ -6,12 +6,13 @@ These are used across server.py, editing.py, analysis.py, and summarize.py.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from pathlib import Path
 
 WORKSPACE_DIR = Path(".formr")
 
-VALID_NAME = __import__("re").compile(r"^[a-z][a-z0-9-]{2,254}$")
+VALID_NAME = re.compile(r"^[a-z][a-z0-9-]{2,254}$")
 
 
 def validate_run_name(name: str) -> None:

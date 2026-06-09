@@ -1,10 +1,10 @@
+import os
+import sys
 import json
-from pathlib import Path
 
 import pytest
 
-sys_path_setup = __import__("sys")
-sys_path_setup.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from formr_mcp.summarize import summarize_run_structure, find_items, _strip_html, _truncate
 

@@ -98,7 +98,7 @@ Set `FORMR_BASE_URL`, `FORMR_CLIENT_ID`, and `FORMR_CLIENT_SECRET` in a `.env` f
 | `list_runs` | List all runs, optionally filter by name |
 | `get_run` | Get run metadata by exact name |
 | `create_run` | Create a new empty run |
-| `delete_run` | Delete a run (requires confirm) |
+| `delete_run` | Permanently delete a run and all its data |
 | `whoami` | Get the authenticated user's profile |
 
 ### Structure Editing

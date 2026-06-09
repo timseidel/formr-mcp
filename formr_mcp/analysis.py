@@ -4,7 +4,7 @@ import re
 import subprocess
 from typing import Any
 
-from formr_mcp.utils import load_structure, validate_run_name
+from formr_mcp.utils import load_structure
 
 _R_AVAILABLE: bool | None = None
 
@@ -23,11 +23,7 @@ def _r_available() -> bool:
     return _R_AVAILABLE
 
 
-
-
-
 # ── R expression extraction ──────────────────────────────────────────
-
 _DOLLAR_RE = re.compile(r"\b(\w+)\$(\w+R?)\b")
 _INLINE_R_RE = re.compile(r"`r\s+([^`]+)`")
 _R_CHUNK_RE = re.compile(r"```\\{r[^}]*}\\s*\n(.*?)```", re.DOTALL)
@@ -449,11 +445,6 @@ def _check_item_consistency(structure: dict) -> list[dict]:
                         "location": f"Survey '{sname}' at position {pos}, item '{iname}'",
                     })
 
-            if cl and isinstance(cl, str) and cl not in {
-                ni.get("choice_list") for ni in items if isinstance(ni, dict) and ni.get("name") == cl
-            }:
-                pass
-
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -551,7 +542,8 @@ def analyze_run(name: str) -> str:
         r_errors = sum(1 for v in r_results.values() if v is not None)
 
     # Short result for clean runs
-    if total_errors == 0 and total_warnings == 0 and r_errors == 0 and not (expressions and not _r_available()):
+    r_validation_ok = _r_available() or not expressions
+    if total_errors == 0 and total_warnings == 0 and r_errors == 0 and r_validation_ok:
         return f"✅ Run '{run_name}': no issues found (0 errors, 0 warnings)."
 
     lines: list[str] = []

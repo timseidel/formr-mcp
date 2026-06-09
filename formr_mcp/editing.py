@@ -12,64 +12,7 @@ import json
 from typing import Any
 
 from formr_mcp.utils import load_structure, save_structure
-
-# Unit type → required + optional fields (mirrors validation.py schemas)
-UNIT_SCHEMAS: dict[str, dict[str, list[str]]] = {
-    "Survey": {
-        "required": ["type", "position"],
-        "optional": ["description", "special", "study_id", "survey_data"],
-    },
-    "Page": {
-        "required": ["type", "position"],
-        "optional": ["description", "special", "body"],
-    },
-    "Email": {
-        "required": ["type", "position"],
-        "optional": ["description", "special", "subject", "account_id", "recipient_field", "body", "cron_only"],
-    },
-    "Branch": {
-        "required": ["type", "position", "condition", "if_true"],
-        "optional": ["description", "special", "automatically_jump", "automatically_go_on"],
-    },
-    "SkipForward": {
-        "required": ["type", "position", "condition", "if_true"],
-        "optional": ["description", "special", "automatically_jump", "automatically_go_on"],
-    },
-    "SkipBackward": {
-        "required": ["type", "position", "condition", "if_true"],
-        "optional": ["description", "special"],
-    },
-    "External": {
-        "required": ["type", "position"],
-        "optional": ["description", "special", "address", "api_end", "expire_after"],
-    },
-    "Pause": {
-        "required": ["type", "position"],
-        "optional": ["description", "special", "wait_until_time", "wait_until_date", "wait_minutes", "relative_to", "body"],
-    },
-    "Wait": {
-        "required": ["type", "position"],
-        "optional": ["description", "special", "wait_until_time", "wait_until_date", "wait_minutes", "relative_to", "body"],
-    },
-    "Shuffle": {
-        "required": ["type", "position"],
-        "optional": ["description", "special", "groups"],
-    },
-    "PushMessage": {
-        "required": ["type", "position"],
-        "optional": ["description", "special", "message", "topic", "priority", "time_to_live", "badge_count", "vibrate", "require_interaction", "renotify", "silent"],
-    },
-    "Privacy": {
-        "required": ["type", "position"],
-        "optional": ["description", "special", "privacy_label", "tos_label"],
-    },
-    "Endpage": {
-        "required": ["type", "position"],
-        "optional": ["description", "special", "body"],
-    },
-}
-
-VALID_UNIT_TYPES = list(UNIT_SCHEMAS.keys())
+from formr_mcp.validation import UNIT_SCHEMAS
 
 # Fields that must be integers
 INT_FIELDS = {"position", "if_true", "account_id", "cron_only", "automatically_jump", "automatically_go_on", "api_end", "expire_after"}

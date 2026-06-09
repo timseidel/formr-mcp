@@ -148,7 +148,7 @@ async def update_run_settings(name: str, settings: dict, ctx: Context = None) ->
     if unknown:
         raise ValueError(
             f"Unknown settings: {', '.join(sorted(unknown))}. "
-            f"See update_run_settings description for valid keys."
+            f"Valid settings: {', '.join(sorted(VALID_SETTINGS))}"
         )
     client = _client(ctx)
     await client.patch_run(name, settings)

@@ -1,17 +1,8 @@
 KNOWN_TYPES = {
-    "Survey",
-    "Page",
-    "Email",
-    "Branch",
-    "SkipForward",
-    "SkipBackward",
-    "External",
-    "Pause",
-    "Wait",
-    "Shuffle",
-    "PushMessage",
-    "Privacy",
-    "Endpage",
+    "Survey", "Page", "Email",
+    "Branch", "SkipForward", "SkipBackward",
+    "External", "Pause", "Wait",
+    "Shuffle", "PushMessage", "Privacy", "Endpage",
 }
 
 BRANCH_TYPES = {"Branch", "SkipForward", "SkipBackward"}
@@ -60,120 +51,77 @@ KNOWN_ITEM_TYPES = {
 }
 
 
+UNIT_SCHEMAS: dict[str, dict[str, list[str] | str]] = {
+    "Survey": {
+        "required": ["type", "position"],
+        "optional": ["description", "special", "study_id", "survey_data"],
+        "description": "A survey/questionnaire presented to the participant.",
+    },
+    "Page": {
+        "required": ["type", "position"],
+        "optional": ["description", "special", "body"],
+        "description": "A markdown page with optional R knitr rendering.",
+    },
+    "Email": {
+        "required": ["type", "position"],
+        "optional": ["description", "special", "subject", "account_id", "recipient_field", "body", "cron_only"],
+        "description": "Sends an email to the participant.",
+    },
+    "Branch": {
+        "required": ["type", "position", "condition", "if_true"],
+        "optional": ["description", "special", "automatically_jump", "automatically_go_on"],
+        "description": "Branching unit: if condition is true, jump to if_true position.",
+    },
+    "SkipForward": {
+        "required": ["type", "position", "condition", "if_true"],
+        "optional": ["description", "special", "automatically_jump", "automatically_go_on"],
+        "description": "Skip forward unit: if condition is true, skip to if_true position.",
+    },
+    "SkipBackward": {
+        "required": ["type", "position", "condition", "if_true"],
+        "optional": ["description", "special"],
+        "description": "Skip backward unit: allows looping back to earlier position.",
+    },
+    "External": {
+        "required": ["type", "position"],
+        "optional": ["description", "special", "address", "api_end", "expire_after"],
+        "description": "External redirect or R expression evaluation.",
+    },
+    "Pause": {
+        "required": ["type", "position"],
+        "optional": ["description", "special", "wait_until_time", "wait_until_date", "wait_minutes", "relative_to", "body"],
+        "description": "Pauses the run for a set duration or until a date/time.",
+    },
+    "Wait": {
+        "required": ["type", "position"],
+        "optional": ["description", "special", "wait_until_time", "wait_until_date", "wait_minutes", "relative_to", "body"],
+        "description": "Wait unit (extends Pause). Body stores the advance-on-click position.",
+    },
+    "Shuffle": {
+        "required": ["type", "position"],
+        "optional": ["description", "special", "groups"],
+        "description": "Randomly shuffles participants into groups.",
+    },
+    "PushMessage": {
+        "required": ["type", "position"],
+        "optional": ["description", "special", "message", "topic", "priority", "time_to_live", "badge_count", "vibrate", "require_interaction", "renotify", "silent"],
+        "description": "Sends a push notification.",
+    },
+    "Privacy": {
+        "required": ["type", "position"],
+        "optional": ["description", "special", "privacy_label", "tos_label"],
+        "description": "Privacy consent and terms of service checkboxes.",
+    },
+    "Endpage": {
+        "required": ["type", "position"],
+        "optional": ["description", "special", "body"],
+        "description": "End page displayed at the conclusion of a run.",
+    },
+}
+
+
 def get_unit_type_schemas() -> dict:
-    return {
-        "Survey": {
-            "required": ["type", "position"],
-            "optional": ["description", "special", "study_id", "survey_data"],
-            "description": "A survey/questionnaire presented to the participant.",
-        },
-        "Page": {
-            "required": ["type", "position"],
-            "optional": ["description", "special", "body"],
-            "description": "A markdown page with optional R knitr rendering.",
-        },
-        "Email": {
-            "required": ["type", "position"],
-            "optional": [
-                "description",
-                "special",
-                "subject",
-                "account_id",
-                "recipient_field",
-                "body",
-                "cron_only",
-            ],
-            "description": "Sends an email to the participant.",
-        },
-        "Branch": {
-            "required": ["type", "position", "condition", "if_true"],
-            "optional": [
-                "description",
-                "special",
-                "automatically_jump",
-                "automatically_go_on",
-            ],
-            "description": "Branching unit: if condition is true, jump to if_true position.",
-        },
-        "SkipForward": {
-            "required": ["type", "position", "condition", "if_true"],
-            "optional": [
-                "description",
-                "special",
-                "automatically_jump",
-                "automatically_go_on",
-            ],
-            "description": "Skip forward unit: if condition is true, skip to if_true position.",
-        },
-        "SkipBackward": {
-            "required": ["type", "position", "condition", "if_true"],
-            "optional": ["description", "special"],
-            "description": "Skip backward unit: allows looping back to earlier position.",
-        },
-        "External": {
-            "required": ["type", "position"],
-            "optional": ["description", "special", "address", "api_end"],
-            "description": "External redirect or R expression evaluation.",
-        },
-        "Pause": {
-            "required": ["type", "position"],
-            "optional": [
-                "description",
-                "special",
-                "wait_until_time",
-                "wait_until_date",
-                "wait_minutes",
-                "relative_to",
-                "body",
-            ],
-            "description": "Pauses the run for a set duration or until a date/time.",
-        },
-        "Wait": {
-            "required": ["type", "position"],
-            "optional": [
-                "description",
-                "special",
-                "wait_until_time",
-                "wait_until_date",
-                "wait_minutes",
-                "relative_to",
-                "body",
-            ],
-            "description": "Wait unit (extends Pause). Body stores the advance-on-click position.",
-        },
-        "Shuffle": {
-            "required": ["type", "position"],
-            "optional": ["description", "special", "groups"],
-            "description": "Randomly shuffles participants into groups.",
-        },
-        "PushMessage": {
-            "required": ["type", "position"],
-            "optional": [
-                "description",
-                "special",
-                "message",
-                "topic",
-                "priority",
-                "time_to_live",
-                "badge_count",
-                "vibrate",
-                "require_interaction",
-                "renotify",
-                "silent",
-            ],
-            "description": "Sends a push notification.",
-        },
-        "Privacy": {
-            "required": ["type", "position"],
-            "optional": ["description", "special", "privacy_label", "tos_label"],
-            "description": "Privacy consent and terms of service checkboxes.",
-        },
-        "Endpage": {
-            "required": ["type", "position"],
-            "optional": ["description", "special", "body"],
-            "description": "End page displayed at the conclusion of a run.",
-        },
-    }
+    return dict(UNIT_SCHEMAS)
 
 
 def validate_survey_data(survey_data: object, unit_label: str) -> list[str]:
