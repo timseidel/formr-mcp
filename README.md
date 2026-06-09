@@ -26,6 +26,7 @@ uv run server.py
 | `FORMR_BASE_URL` | formr instance URL (e.g. `http://localhost`) |
 | `FORMR_CLIENT_ID` | 32-char hex client ID from `/admin/account#api` |
 | `FORMR_CLIENT_SECRET` | 64-char hex secret from `/admin/account#api` |
+| `FLOWCHART_URL` | (optional) URL of the formr Flowchart Generator (default: `https://formr-flowchart-test.pages.dev`) |
 
 ## MCP Client Configuration
 
@@ -115,6 +116,7 @@ Set `FORMR_BASE_URL`, `FORMR_CLIENT_ID`, and `FORMR_CLIENT_SECRET` in a `.env` f
 | `summarize_run` | Human-readable overview (`detail="units"` or `"items"`) |
 | `find_run_items` | Search items by name/label substring and/or type |
 | `analyze_run` | Check R syntax, variable refs, branch flow, item consistency |
+| `open_flowchart` | Upload run structure and get a shareable flowchart URL (expires in 24h) |
 
 ### Documentation
 

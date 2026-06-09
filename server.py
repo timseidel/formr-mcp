@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import webbrowser
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
@@ -33,7 +34,7 @@ load_dotenv(dotenv_path)
 BASE_URL = os.getenv("FORMR_BASE_URL", "")
 CLIENT_ID = os.getenv("FORMR_CLIENT_ID", "")
 CLIENT_SECRET = os.getenv("FORMR_CLIENT_SECRET", "")
-
+FLOWCHART_URL = os.getenv("FLOWCHART_URL", "https://formr-flowchart-test.tim-seidel.workers.dev")
 WORKSPACE_DIR = Path(".formr")
 
 VALID_NAME = re.compile(r"^[a-z][a-z0-9-]{2,254}$")
@@ -102,6 +103,9 @@ SETUP: The user must configure a .env file with formr API credentials:
 Required scopes: survey:read, run:read, run:write, data:read (admin >= 2).
 If tools return auth errors, the .env file is missing or misconfigured.
 
+Optional:
+  FLOWCHART_URL — URL of the formr Flowchart Generator (default: https://formr-flowchart-test.pages.dev)
+
 formr is a survey framework for psychology research. Runs are ordered
 compositions of units (Surveys, Pages, Emails, Branches, etc.) where
 execution flows by position number. Branching uses R expressions in
@@ -139,7 +143,8 @@ Available tools:
   remove_run_unit(name, position, compact?) — remove a unit from the local file
   duplicate_run_units(name, from_positions, to_start_position) — copy units to new positions
   shift_run_positions(name, from_position, delta) — shift units to make room or close gaps
-  generate_survey_items(description, survey_name?, language?) — generate items JSON from a description""",
+  generate_survey_items(description, survey_name?, language?) — generate items JSON from a description
+  open_flowchart(name) — upload run structure and get a shareable flowchart URL""",
 )
 
 
@@ -486,6 +491,63 @@ def generate_survey_items(description: str, survey_name: str = "survey",
     """
     return editing_generate_survey_items(description, survey_name=survey_name,
                                           language=language)
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def open_flowchart(name: str, ctx: Context = None) -> str:
+    """Open a flowchart visualization of a run in the browser.
+
+    Uploads the local run structure to the formr Flowchart Generator and returns
+    a shareable URL. The recipient can open the URL to see an interactive flowchart
+    of the run structure — no login or file export needed.
+
+    The run structure must have been fetched first with get_run_structure_to_file.
+
+    The share link expires after 24 hours.
+
+    The URL is automatically opened in the default browser (via webbrowser.open).
+    """
+    validate_run_name(name)
+    filepath = run_filepath(name)
+
+    if not filepath.exists():
+        raise FileNotFoundError(
+            f"No local file for run '{name}'. "
+            f"Call get_run_structure_to_file(\"{name}\") first."
+        )
+
+    with open(filepath) as f:
+        structure = json.load(f)
+
+    if not isinstance(structure, dict) or "units" not in structure:
+        raise ValueError(f"Invalid run structure in {filepath}: missing 'units' key")
+
+    payload = json.dumps(structure, separators=(",", ":"))
+    if len(payload) > 1024 * 1024:
+        raise ValueError(
+            f"Run structure is too large ({len(payload) / 1024:.0f} KB). "
+            f"Maximum size is 1 MB."
+        )
+
+    import httpx
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{FLOWCHART_URL}/api/share",
+            content=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+
+    webbrowser.open(result["url"])
+
+    return (
+        f"Flowchart link for run '{name}' (expires in 24 hours):\n\n"
+        f"  {result['url']}\n\n"
+        f"Open this URL in a browser to view the interactive flowchart. "
+        f"Pan with mouse drag, zoom with scroll wheel."
+    )
 
 
 if __name__ == "__main__":

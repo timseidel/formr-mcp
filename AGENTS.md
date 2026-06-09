@@ -43,6 +43,17 @@ When adding features, trace the data flow end-to-end:
 
 When adding a new tool, register it in all four places. The test pattern is: create a temp directory, monkey-patch `WORKSPACE_DIR`, write a fixture JSON, call the function, read back and assert.
 
+### The open_flowchart tool
+
+This tool bridges formr-mcp with the formr Flowchart Generator (a separate web app). It:
+
+1. Reads the local `.formr/<name>.json` file
+2. POSTs the structure to the Flowchart Generator's `/api/share` endpoint
+3. Returns a shareable URL that opens the interactive flowchart
+4. Automatically opens the URL in the user's default browser (via `webbrowser.open`)
+
+The Flowchart Generator URL is configurable via the `FLOWCHART_URL` env var (default: `https://formr-flowchart-test.pages.dev`). The share link expires after 24 hours (KV TTL).
+
 ### Testing patterns
 
 - **Monkey-patch `WORKSPACE_DIR`** to a temp directory for isolation. This avoids touching real run files.
