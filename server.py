@@ -45,7 +45,7 @@ FLOWCHART_URL = os.getenv("FLOWCHART_URL", "https://formr-flowchart-test.tim-sei
 VALID_SETTINGS = {
     "title", "description", "footer_text", "public_blurb",
     "privacy", "tos", "header_image_path", "custom_css", "custom_js",
-    "custom_r", "cron_active", "use_material_design", "expiresOn",
+    "custom_r", "cron_active", "expiresOn",
     "expire_cookie_value", "expire_cookie_unit", "public", "locked",
 }
 
@@ -143,11 +143,19 @@ async def update_run_settings(name: RunName, settings: dict, ctx: Context = None
 
     Common settings: title, description, public (0=admin/test-only, 2=link-accessible), locked (0/1),
     custom_css, custom_js, custom_r, cron_active, expiresOn, footer_text, public_blurb, privacy,
-    tos, header_image_path, use_material_design, expire_cookie_value, expire_cookie_unit.
+    tos, header_image_path, expire_cookie_value, expire_cookie_unit.
 
     Returns the full updated run with all settings.
     """
     validate_run_name(name)
+    val = settings.get("use_material_design")
+    if val is not None and val != 0:
+        raise ValueError(
+            "'use_material_design' must be 0 or omitted. "
+            "Material Design is a legacy theme that is not supported. "
+            "Use custom_css to style the survey instead."
+        )
+    settings.pop("use_material_design", None)
     unknown = set(settings) - VALID_SETTINGS
     if unknown:
         raise ValueError(

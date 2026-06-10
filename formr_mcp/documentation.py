@@ -432,7 +432,7 @@ Pass only the fields you want to change. Available settings:
 | `custom_js` | string | Custom JavaScript content (written to file) |
 | `custom_r` | string | Custom R functions (written to file) |
 | `cron_active` | 0/1 | Whether cron daemon processes this run |
-| `use_material_design` | 0/1 | Material design theme toggle |
+| `use_material_design` | 0/1 | **Forbidden** — must be 0 or omitted. Legacy theme, use custom_css instead. |
 | `expiresOn` | string | Run expiry date (YYYY-MM-DD, must be future) |
 | `expire_cookie_value` | int | Cookie lifetime value (combined with unit) |
 | `expire_cookie_unit` | string | Cookie lifetime unit: seconds, minutes, hours, days, months, years |
@@ -875,6 +875,7 @@ Most settings default to `0`/`false`. The key ones:
 **Forbidden settings:**
 - `use_paging` — Do NOT set this to 1. Custom Paging is a legacy feature that is no longer supported. Use `submit` items in the item list to create page breaks instead.
 - `page_items` — Do NOT use. This is part of the legacy Custom Paging feature. Use `submit` items to create page breaks.
+- `use_material_design` — Do NOT set this to 1. Material Design is a legacy theme that is not supported. Use `custom_css` to style the survey instead.
 
 ## Full Example
 
@@ -1908,6 +1909,9 @@ not installed, it needs to be added to the OpenCPU Dockerfile.
     "Custom Paging" controls. They are no longer supported. Use `submit` items
     in the item list to create page breaks instead. A `submit` item creates a
     page break: all items before it render as one page.
+12. **Setting use_material_design to 1 in run settings** — Material Design is a
+    legacy theme that is not supported. Use `custom_css` to style the survey
+    appearance instead.
 """
 
 

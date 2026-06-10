@@ -514,6 +514,16 @@ def _check_common_mistakes(structure: dict) -> list[dict]:
                             "location": f"{utype} condition at position {pos}",
                         })
 
+    run_settings = structure.get("settings", {})
+    md = run_settings.get("use_material_design")
+    if md is not None and md != 0:
+        findings.append({
+            "severity": "error",
+            "message": f"Run-level 'use_material_design' is set to {md}. "
+                        f"Material Design is a legacy theme that is not supported.",
+            "location": "Run settings",
+        })
+
     expressions = _extract_r_expressions(structure)
     for source in expressions:
         expr = source["expr"].strip()

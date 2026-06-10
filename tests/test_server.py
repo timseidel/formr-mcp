@@ -19,7 +19,7 @@ class TestValidSettings:
         expected = {
             "title", "description", "footer_text", "public_blurb",
             "privacy", "tos", "header_image_path", "custom_css", "custom_js",
-            "custom_r", "cron_active", "use_material_design", "expiresOn",
+            "custom_r", "cron_active", "expiresOn",
             "expire_cookie_value", "expire_cookie_unit", "public", "locked",
         }
         assert VALID_SETTINGS == expected
@@ -39,6 +39,26 @@ class TestSettingsValidation:
         settings = {"title": "Test", "locked": 0}
         unknown = set(settings) - VALID_SETTINGS
         assert unknown == set()
+
+    def test_use_material_design_one_rejected(self):
+        with pytest.raises(ValueError, match="must be 0 or omitted"):
+            asyncio.run(
+                server_mod.update_run_settings("demo", {"use_material_design": 1}, ctx=MagicMock())
+            )
+
+    def test_use_material_design_zero_accepted(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("formr_mcp.utils.WORKSPACE_DIR", tmp_path / "ws")
+        mock_client = AsyncMock()
+        mock_client.get_run.return_value = {"name": "demo", "settings": {}}
+        mock_client.patch_run.return_value = None
+        monkeypatch.setattr(server_mod, "_client", lambda ctx: mock_client)
+        result = asyncio.run(
+            server_mod.update_run_settings("demo", {"use_material_design": 0}, ctx=MagicMock())
+        )
+        assert result["name"] == "demo"
+
+    def test_use_material_design_is_not_a_known_setting(self):
+        assert "use_material_design" not in VALID_SETTINGS
 
 
 class TestRunFilepath:

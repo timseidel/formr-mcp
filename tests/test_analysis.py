@@ -418,3 +418,26 @@ class TestCustomPagingForbidden:
         findings = _check_item_consistency(structure)
         paging_errors = [f for f in findings if "use_paging" in f["message"]]
         assert len(paging_errors) == 0
+
+
+class TestMaterialDesignCheck:
+    def test_use_material_design_one_flagged(self):
+        structure = _make_structure([], name="test")
+        structure["settings"] = {"use_material_design": 1}
+        findings = _check_common_mistakes(structure)
+        md_errors = [f for f in findings if "use_material_design" in f["message"]]
+        assert len(md_errors) == 1
+        assert md_errors[0]["severity"] == "error"
+
+    def test_use_material_design_zero_ok(self):
+        structure = _make_structure([], name="test")
+        structure["settings"] = {"use_material_design": 0}
+        findings = _check_common_mistakes(structure)
+        md_errors = [f for f in findings if "use_material_design" in f["message"]]
+        assert len(md_errors) == 0
+
+    def test_use_material_design_absent_ok(self):
+        structure = _make_structure([], name="test")
+        findings = _check_common_mistakes(structure)
+        md_errors = [f for f in findings if "use_material_design" in f["message"]]
+        assert len(md_errors) == 0
