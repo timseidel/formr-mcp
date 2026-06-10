@@ -1661,13 +1661,13 @@ This is essential after `remove_run_unit(compact=True)` which shifts by 1 and le
 
 Safe to call on already-clean structures — if positions are already at clean multiples in the right order, no changes are made.
 
-### generate_survey_items
+## Authoring Survey Items
 
-```
-generate_survey_items(description, survey_name="survey", language="en")
-```
-
-Generate a survey items JSON array based on a description. Returns JSON text you can paste into your run structure. Does NOT modify any file.
+To create or modify items in a Survey unit's `survey_data`, use the JSON format
+documented in `get_documentation("survey-json")` (structure, fields, choices, page
+breaks, CSS classes) together with `get_documentation("item-types")` (all 56 item
+types, choices rules, type_options). Edit the `.formr/<name>.json` file directly
+with Read/Edit tools after fetching it with `get_run_structure_to_file`.
 
 ## Read-Only Inspection Tools
 

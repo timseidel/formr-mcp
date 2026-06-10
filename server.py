@@ -18,7 +18,6 @@ from formr_mcp.analysis import analyze_run as run_analysis
 from formr_mcp.editing import (
     add_run_unit as editing_add_run_unit,
     duplicate_run_units as editing_duplicate_run_units,
-    generate_survey_items as editing_generate_survey_items,
     remove_run_unit as editing_remove_run_unit,
     renormalize_positions as editing_renormalize_positions,
     shift_run_positions as editing_shift_run_positions,
@@ -372,24 +371,6 @@ def renormalize_positions(name: str, spacing: int = 10, ctx: Context = None) -> 
     """
     validate_run_name(name)
     return editing_renormalize_positions(name, spacing=spacing)
-
-
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-def generate_survey_items(description: str, survey_name: str = "survey",
-                           language: str = "en", ctx: Context = None) -> str:
-    """Generate a survey items JSON array based on a description. Returns JSON
-    text you can paste into your run structure. Does NOT modify any file.
-
-    The description should specify what items you want, e.g.:
-    "BFI-15 personality questionnaire in German with 5-point Likert scale"
-    "ESM survey with activity, location, interaction partners, and 3 affect items"
-    "Screening questionnaire for age, language, country, email, smartphone access"
-
-    The LLM will generate well-formed item JSON with correct item_order,
-    choices, choice_list, type_options, etc.
-    """
-    return editing_generate_survey_items(description, survey_name=survey_name,
-                                          language=language)
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True, idempotentHint=False, openWorldHint=True))

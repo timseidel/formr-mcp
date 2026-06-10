@@ -1,5 +1,5 @@
 """Tests for editing.py — add_run_unit, remove_run_unit, duplicate_run_units,
-shift_run_positions, generate_survey_items."""
+shift_run_positions, renormalize_positions."""
 
 import json
 import os
@@ -14,7 +14,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from formr_mcp.editing import (
     add_run_unit,
     duplicate_run_units,
-    generate_survey_items,
     remove_run_unit,
     renormalize_positions,
     shift_run_positions,
@@ -472,20 +471,6 @@ class TestShiftRunPositions:
         structure = _read_run(run_file)
         skip = next(u for u in structure["units"] if u["type"] == "SkipBackward")
         assert skip["if_true"] == 15
-
-
-class TestGenerateSurveyItems:
-    def test_returns_json(self):
-        result = generate_survey_items("Screening questionnaire")
-        parsed = json.loads(result)
-        assert "template" in parsed
-        assert parsed["description"] == "Screening questionnaire"
-        assert parsed["language"] == "en"
-
-    def test_custom_language(self):
-        result = generate_survey_items("BFI-15", language="de")
-        parsed = json.loads(result)
-        assert parsed["language"] == "de"
 
 
 class TestRenormalizePositions:
