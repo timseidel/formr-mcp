@@ -335,7 +335,10 @@ hour(now()) >= 9 && hour(now()) < 12
 
 ### survey_unit_sessions
 
-A data frame tracking every unit visit for the current participant. Key columns:
+A data frame tracking every unit visit for the **current participant**. Key columns:
+
+> **SCOPE**: Contains ONLY the current participant's rows. To access data across
+> ALL participants, use the formr V1 API anywhere in run R code (see §10 below).
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -578,7 +581,10 @@ System columns available in every survey: `created`, `ended`, `modified`.
 ## 7. survey_unit_sessions — tracking unit visits
 
 `survey_unit_sessions` is a system data frame tracking **every unit visit** for the
-current participant. Key columns:
+**current participant only**. It does NOT contain rows for other participants.
+To access data across all participants, use the formr V1 API anywhere in run R code (§8).
+
+Key columns:
 
 | Column | Description |
 |--------|-------------|
@@ -608,7 +614,7 @@ evaluated as R code via OpenCPU. This enables:
 - SMS gateway API calls via `httr::GET()`
 - Phone number transformation
 - Conditional redirects (return a URL string to redirect, or `FALSE` to move on)
-- Cross-run data queries via `formr_connect()` + `formr_raw_results()`
+- Cross-participant data queries via the formr V1 API (`formr_api_authenticate` + `formr_api_results`/`formr_api_sessions`)
 
 The R expression has access to all the participant's run data, just like conditions.
 The return value determines behavior:
@@ -641,21 +647,52 @@ Secrets are conditionally injected — only those referenced in code are include
 in the OpenCPU evaluation. Error messages are automatically redacted to prevent
 leaking secret values.
 
-## 10. Cross-run data access
+## 10. Cross-participant data access (V1 API)
 
-To query data from another formr run (e.g., counting acquaintance reports), use
-`formr_connect()` and `formr_raw_results()` within an External unit's R code:
+`survey_unit_sessions` and survey data frames contain **only the current participant's
+data**. To query data across all participants, use the formr V1 API (`formr_api_*`).
+
+**Auto-injection**: Whenever formr evaluates R code that contains `formr_api_authenticate(`,
+it automatically mints a short-lived OAuth token (180 s, `data:read` scope) for the run
+owner and injects it into `.formr$access_token`, `.formr$host`, and `.formr$run_name`
+before the code runs. Call `formr_api_authenticate()` with **no arguments** — it picks
+up the injected token automatically. No secrets to configure.
+
+This works in **all R evaluation contexts within a run**: Branch/SkipForward/SkipBackward
+conditions, survey item `value` and `showif` fields, item and choice `label` knitr
+rendering, Page/Endpage `body` content, Email unit `body` content, and External unit R
+code. The only exception is plaintext evaluation (email subject lines, push notification
+titles), which does not go through the R evaluation pipeline.
+
+The auto-injected token is **restricted to the current run**. For accessing a different
+run, store credentials as run secrets (§9) and pass them explicitly.
 
 ```r
 library(formr)
-formr_connect(email = "admin@study.edu", password = .formr$secret_admin_pw,
-              host = "https://formr.example.org")
-acq_data <- formr_raw_results("acq_survey")
-nrow(acq_data)  # count total acquaintance reports
+
+# ── Current run: token auto-injected, no secrets needed ──────────────────────
+formr_api_authenticate()
+
+all_sessions <- formr_api_sessions(.formr$run_name)
+nrow(all_sessions)  # total session count
+
+all_results <- formr_api_results(.formr$run_name)
+nrow(all_results)   # participants with response data
+
+# ── Different run: store credentials as run secrets (§9) ──────────────────────
+formr_api_authenticate(
+  client_id     = .formr$secret_api_client_id,
+  client_secret = .formr$secret_api_client_secret,
+  host          = .formr$host
+)
+other_data <- formr_api_results("other-run-name")
+nrow(other_data)
 ```
 
-This requires storing admin credentials as run secrets (see §9) and the formr
-R package being available on the OpenCPU instance.
+Never use the deprecated `formr_connect()` / `formr_raw_results()` — use `formr_api_*` exclusively.
+
+For R code that researchers run in **their own RStudio session** (not inside a formr
+run), the same `formr_api_*` functions apply with explicit client_id, client_secret, and host.
 
 ## 11. Available R packages
 
@@ -2107,21 +2144,35 @@ SkipForward (time gate) → Wait (click window) → Email (reminder) → Survey
 }
 ```
 
-## Cross-Run Data Access
+## Cross-Participant Data Access (V1 API)
 
-To query data from another formr run (e.g., counting acquaintance reports),
-use `formr_connect()` and `formr_raw_results()` within an External unit:
+`survey_unit_sessions` and survey data frames contain only the current participant's
+data. The V1 API is available in all R evaluation contexts within a run (conditions,
+item values/showif, labels, page/email bodies, External units) to query all participants.
+
+**Auto-injection**: formr injects a token when it detects `formr_api_authenticate(`.
+Call it with **no arguments** for the current run — no secrets needed.
+The auto-token is **run-restricted**; for a different run, pass credentials explicitly.
 
 ```r
 library(formr)
-formr_connect(email = "admin@study.edu",
-              password = .formr$secret_admin_pw,
-              host = "https://formr.example.org")
-acq <- formr_raw_results("acq_survey")
+
+# ── Current run: token auto-injected ─────────────────────────────────────────
+formr_api_authenticate()
+sessions <- formr_api_sessions(.formr$run_name)
+nrow(sessions)
+
+# ── Different run: credentials from run secrets ───────────────────────────────
+formr_api_authenticate(
+  client_id     = .formr$secret_api_client_id,
+  client_secret = .formr$secret_api_client_secret,
+  host          = .formr$host
+)
+acq <- formr_api_results("acq-run")
 nrow(acq)
 ```
 
-This requires the `formr` R package and admin credentials stored as run secrets.
+Never use the deprecated `formr_connect()` / `formr_raw_results()` — use `formr_api_*` exclusively.
 
 ## Personalized Links Between Runs
 
@@ -2135,4 +2186,180 @@ paste0('https://formr.example.org/acq-run/?ps=1&anchor=',
 
 The `anchor` parameter pre-fills the acquaintance run with the participant's
 truncated session code, enabling data linkage.
+"""
+
+
+@_topic("data-access", "Accessing participant data — V1 API for External units and RStudio")
+def _data_access():
+    return r"""# Accessing Participant Data in formr
+
+## The boundary: system frames vs. V1 API
+
+| Data source | Scope | When to use |
+|-------------|-------|-------------|
+| `survey_unit_sessions` | Current participant only | Timing, deduplication, dropout detection |
+| Survey data frames (`diary`, `baseline`, …) | Current participant only | Personalising content, conditional logic |
+| formr V1 API (`formr_api_*`) | ALL participants, ALL runs | Counts, aggregate checks, cross-run lookups |
+
+If you need a number, percentage, or list that covers **more than one participant**,
+you need the V1 API.
+
+## When to reach for the V1 API
+
+Reach for `formr_api_*` whenever you need to:
+
+- Count how many participants completed a run or survey
+- Check whether a participant's acquaintance / partner has already submitted data
+- Join data across two separate runs (e.g., target run + nominator run)
+- Detect global study state (e.g., "has wave 2 begun?")
+- Query session statuses or current positions across all participants
+
+## Two usage contexts
+
+### A — Inside any R code within a formr run
+
+R code is evaluated by formr's OpenCPU server in many contexts: Branch conditions,
+survey item `value`/`showif` fields, item/choice `label` knitr, Page/Endpage bodies,
+Email bodies, and External unit code. The V1 API is available in all of them.
+
+**formr auto-injects an OAuth token** when it detects `formr_api_authenticate(` in
+the code. It mints a 180 s token (scopes: `data:read session:read session:write run:read`)
+for the run owner and injects it into `.formr$access_token`, `.formr$host`, and
+`.formr$run_name`. Call `formr_api_authenticate()` with **no arguments** — no secrets,
+no setup required.
+
+The auto-token is **run-restricted** (current run only). For a different run, store
+OAuth credentials as run secrets (see §B.2 below) and pass them explicitly.
+
+**Exception**: Email subject lines and push notification titles are rendered as
+plaintext — they do not go through R evaluation and cannot use the V1 API.
+
+```r
+library(formr)
+
+# ── Same run: no arguments, token auto-injected ──────────────────────────────
+formr_api_authenticate()
+
+# Count all participants in this run
+all_sessions <- formr_api_sessions(.formr$run_name)
+nrow(all_sessions) >= 10   # TRUE/FALSE → branch condition
+
+# ── Different run: credentials from run secrets ───────────────────────────────
+formr_api_authenticate(
+  client_id     = .formr$secret_api_client_id,
+  client_secret = .formr$secret_api_client_secret,
+  host          = .formr$host
+)
+acq <- formr_api_results("acq-run")
+n_completed <- nrow(acq[!is.na(acq$acq_name_1), ])
+n_completed >= 3   # TRUE/FALSE → branch condition
+```
+
+Return value semantics for External units:
+- `FALSE` → advance to next unit
+- A URL string → redirect participant there
+- Any other value → logged, advance to next unit
+
+### B — In the researcher's own RStudio session
+
+The same `formr_api_*` functions work identically outside formr. Researchers run
+this locally to download and analyse data.
+
+```r
+library(formr)
+
+# Interactive authentication (stores token in OS keyring)
+formr_api_authenticate(
+  client_id     = "your-client-id",
+  client_secret = "your-client-secret",
+  host          = "https://formr.example.org"
+)
+
+# Download and process all participant data for a run
+results <- formr_api_results("my-diary-run")
+head(results)
+
+# List all sessions with current positions
+sessions <- formr_api_sessions("my-diary-run")
+table(sessions$position)
+```
+
+> The LLM should produce R code as an artifact for the researcher to run
+> in RStudio — never attempt to fetch or process participant data itself.
+
+## Key V1 API functions
+
+| Function | Returns | Notes |
+|----------|---------|-------|
+| `formr_api_authenticate()` | token (invisible) | No-args inside External units — token auto-injected |
+| `formr_api_authenticate(client_id, client_secret, host)` | token (invisible) | Explicit creds for RStudio or cross-run access |
+| `formr_api_results("run")` | data.frame | All participants, processed (types recognised, scales aggregated) |
+| `formr_api_fetch_results("run", join=FALSE)` | list of data.frames | Raw unprocessed, one per survey |
+| `formr_api_sessions("run")` | data.frame | All sessions: session code, created, ended, position |
+| `formr_api_session_action("run", session_codes, action)` | invisible | Move/end/toggle sessions; actions: `"end_external"`, `"move_to_position"`, `"toggle_testing"` |
+
+## Setting up credentials
+
+### For External units accessing the current run
+
+No setup required. formr auto-injects a run-scoped token whenever
+`formr_api_authenticate(` appears in the code. Call `formr_api_authenticate()`
+with no arguments.
+
+### For External units accessing a different run (run secrets)
+
+1. Add secret names (not values) to run settings:
+   ```json
+   "secrets": ["api_client_id", "api_client_secret"]
+   ```
+2. Fill in actual values in the formr admin interface (encrypted at rest).
+3. Reference in R code as `.formr$secret_api_client_id`, `.formr$secret_api_client_secret`.
+4. The credential needs `data:read` scope and the target run in its allowlist.
+
+### For RStudio (researcher's own session)
+
+Pass explicit credentials to `formr_api_authenticate()`. These can be stored in
+the OS keyring via `formr_store_keys()` to avoid hardcoding.
+
+## Common patterns
+
+### Count completions in the current run (External unit)
+```r
+library(formr)
+formr_api_authenticate()   # auto-injected token, no args needed
+sessions <- formr_api_sessions(.formr$run_name)
+sum(!is.na(sessions$ended))  # participants who finished
+```
+
+### Check if a linked run has a matching entry (cross-run, needs secrets)
+```r
+library(formr)
+formr_api_authenticate(
+  client_id     = .formr$secret_api_client_id,
+  client_secret = .formr$secret_api_client_secret,
+  host          = .formr$host
+)
+acq <- formr_api_results("acq-run")
+any(acq$target_code == .formr$login_code, na.rm = TRUE)
+```
+
+### Download data in RStudio
+```r
+library(formr)
+formr_api_authenticate(
+  client_id     = "your-client-id",
+  client_secret = "your-client-secret",
+  host          = "https://formr.example.org"
+)
+results <- formr_api_results("my-diary-run")
+head(results)
+```
+
+### Fetch raw results for two surveys separately
+```r
+raw_list <- formr_api_fetch_results("my-run", join = FALSE)
+baseline <- raw_list[["baseline"]]
+diary    <- raw_list[["diary_survey"]]
+nrow(diary)
+```
 """

@@ -88,7 +88,15 @@ execution flows by position number. Branching uses R expressions in
 WORKFLOW — Always use the file-based workflow for run structures:
   1. Fetch:  get_run_structure_to_file(name) → .formr/<name>.json (backs up existing)
   2. Edit:   Use Read/Edit tools on .formr/<name>.json
-  3. Upload: update_run_structure_from_file(name) → validates and uploads""",
+  3. Upload: update_run_structure_from_file(name) → validates and uploads
+
+DATA ACCESS — survey_unit_sessions / survey data frames = current participant only.
+For all-participant data: formr_api_authenticate() with NO ARGUMENTS works in ALL run
+R contexts (conditions, item values/showif, labels, page/email bodies, External units)
+— formr auto-injects a run-scoped token (180 s, data:read). Exception: email subjects
+/ push titles (plaintext, no R eval). For a DIFFERENT run: store credentials as run
+secrets and pass them explicitly. Never use formr_connect() / formr_raw_results().
+See get_documentation("data-access").""",
 )
 
 
@@ -265,7 +273,7 @@ def get_unit_types(ctx: Context = None) -> dict:
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-def get_documentation(topic: Literal["item-types", "run-concepts", "r-code", "survey-json", "examples", "best-practices", "editing-tools", "unit-types-advanced"], ctx: Context = None) -> str:
+def get_documentation(topic: Literal["item-types", "run-concepts", "r-code", "survey-json", "examples", "best-practices", "editing-tools", "unit-types-advanced", "data-access"], ctx: Context = None) -> str:
     """Get formr design documentation. Use this to learn how to design formr surveys and runs."""
     return doc.get_documentation(topic)
 
