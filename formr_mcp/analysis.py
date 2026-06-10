@@ -458,6 +458,26 @@ def _check_item_consistency(structure: dict) -> list[dict]:
                         "location": f"Survey '{sname}' at position {pos}",
                     })
 
+        settings = sd.get("settings")
+        if isinstance(settings, dict):
+            use_paging = settings.get("use_paging")
+            if use_paging is not None and use_paging != 0:
+                findings.append({
+                    "severity": "error",
+                    "message": f"Survey '{sname}' has use_paging={use_paging}. "
+                                f"Custom Paging is legacy and unsupported — "
+                                f"use 'submit' items to create page breaks.",
+                    "location": f"Survey '{sname}' at position {pos}",
+                })
+            if "page_items" in settings:
+                findings.append({
+                    "severity": "error",
+                    "message": f"Survey '{sname}' uses 'page_items' in settings. "
+                                f"page_items is not supported — "
+                                f"use 'submit' items in the item list to create page breaks.",
+                    "location": f"Survey '{sname}' at position {pos}",
+                })
+
     return findings
 
 

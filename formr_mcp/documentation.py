@@ -842,6 +842,10 @@ are rendered as one page. Multiple `submit` items = multi-page survey.
 {"type": "submit", "name": "page1", "label": "Continue"}
 ```
 
+**Do not use Custom Paging.** The `use_paging` and `page_items` settings are
+legacy features that are no longer supported. Always use `submit` items to
+create page breaks.
+
 ## Settings Object
 
 The `settings` object (optional) controls survey behavior:
@@ -857,8 +861,7 @@ The `settings` object (optional) controls survey behavior:
     "unlinked": 0,
     "expire_invitation_after": 0,
     "expire_invitation_grace": 0,
-    "hide_results": 0,
-    "use_paging": 0
+    "hide_results": 0
 }
 ```
 
@@ -868,6 +871,10 @@ Most settings default to `0`/`false`. The key ones:
 - `displayed_percentage_maximum` — progress bar max
 - `unlinked` — allow anonymous (unlinked) sessions
 - `hide_results` — hide results from participants
+
+**Forbidden settings:**
+- `use_paging` — Do NOT set this to 1. Custom Paging is a legacy feature that is no longer supported. Use `submit` items in the item list to create page breaks instead.
+- `page_items` — Do NOT use. This is part of the legacy Custom Paging feature. Use `submit` items to create page breaks.
 
 ## Full Example
 
@@ -945,8 +952,7 @@ Most settings default to `0`/`false`. The key ones:
             "unlinked": 0,
             "expire_invitation_after": 0,
             "expire_invitation_grace": 0,
-            "hide_results": 0,
-            "use_paging": 0
+            "hide_results": 0
         }
     }
 }
@@ -1466,8 +1472,7 @@ Each Survey unit defines its items inline as JSON objects.
                     "unlinked": 0,
                     "expire_invitation_after": 0,
                     "expire_invitation_grace": 0,
-                    "hide_results": 0,
-                    "use_paging": 0
+                    "hide_results": 0
                 }
             }
         },
@@ -1537,7 +1542,7 @@ Each Survey unit defines its items inline as JSON objects.
                         "type_options": "auto",
                         "block_order": "",
                         "item_order": 4
-                    }
+}
                 ],
                 "settings": {
                     "maximum_number_displayed": 0,
@@ -1549,8 +1554,7 @@ Each Survey unit defines its items inline as JSON objects.
                     "unlinked": 0,
                     "expire_invitation_after": 0,
                     "expire_invitation_grace": 0,
-                    "hide_results": 0,
-                    "use_paging": 0
+                    "hide_results": 0
                 }
             }
         },
@@ -1886,6 +1890,10 @@ not installed, it needs to be added to the OpenCPU Dockerfile.
 10. **Ignoring survey_unit_sessions** — this table is essential for ESM studies.
     Use it to track when notifications were sent and implement reminder
     deduplication.
+11. **Using use_paging or page_items in survey settings** — these are legacy
+    "Custom Paging" controls. They are no longer supported. Use `submit` items
+    in the item list to create page breaks instead. A `submit` item creates a
+    page break: all items before it render as one page.
 """
 
 

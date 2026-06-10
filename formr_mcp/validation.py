@@ -203,6 +203,20 @@ def validate_survey_data(survey_data: object, unit_label: str) -> list[str]:
     if settings is not None and not isinstance(settings, dict):
         errors.append(f"{unit_label}: 'survey_data.settings' must be a JSON object")
 
+    if isinstance(settings, dict):
+        use_paging = settings.get("use_paging")
+        if use_paging is not None and use_paging != 0:
+            errors.append(
+                f"{unit_label}: 'use_paging' must be 0 or omitted. "
+                f"Custom Paging is legacy and unsupported — "
+                f"use 'submit' items in the item list to create page breaks."
+            )
+        if "page_items" in settings:
+            errors.append(
+                f"{unit_label}: 'page_items' is not supported. "
+                f"Use 'submit' items in the item list to create page breaks."
+            )
+
     return errors
 
 

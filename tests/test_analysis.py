@@ -360,3 +360,61 @@ class TestEmailBodyRextraction:
         sources = _extract_r_expressions(structure)
         pause_r = [s for s in sources if s["type"] == "knitr_inline" and "Pause" in s["location"]]
         assert len(pause_r) >= 1
+
+
+class TestCustomPagingForbidden:
+    def _make_survey_with_settings(self, name, pos, items, settings):
+        return {
+            "type": "Survey",
+            "position": pos,
+            "description": name,
+            "special": "",
+            "survey_data": {
+                "name": name,
+                "items": items,
+                "settings": settings,
+            },
+        }
+
+    def test_use_paging_nonzero_flagged(self):
+        items = [{"type": "note", "name": "n1", "label": "Hi", "optional": 1}]
+        unit = self._make_survey_with_settings("demo", 10, items, {"use_paging": 1})
+        structure = _make_structure([unit])
+        findings = _check_item_consistency(structure)
+        paging_errors = [f for f in findings if "use_paging" in f["message"]]
+        assert len(paging_errors) == 1
+        assert paging_errors[0]["severity"] == "error"
+
+    def test_use_paging_zero_ok(self):
+        items = [{"type": "note", "name": "n1", "label": "Hi", "optional": 1}]
+        unit = self._make_survey_with_settings("demo", 10, items, {"use_paging": 0})
+        structure = _make_structure([unit])
+        findings = _check_item_consistency(structure)
+        paging_errors = [f for f in findings if "use_paging" in f["message"]]
+        assert len(paging_errors) == 0
+
+    def test_page_items_flagged(self):
+        items = [{"type": "note", "name": "n1", "label": "Hi", "optional": 1}]
+        unit = self._make_survey_with_settings("demo", 10, items, {"page_items": ["item1"]})
+        structure = _make_structure([unit])
+        findings = _check_item_consistency(structure)
+        pi_errors = [f for f in findings if "page_items" in f["message"]]
+        assert len(pi_errors) == 1
+        assert pi_errors[0]["severity"] == "error"
+
+    def test_no_settings_ok(self):
+        items = [{"type": "note", "name": "n1", "label": "Hi", "optional": 1}]
+        unit = {
+            "type": "Survey",
+            "position": 10,
+            "description": "demo",
+            "special": "",
+            "survey_data": {
+                "name": "demo",
+                "items": items,
+            },
+        }
+        structure = _make_structure([unit])
+        findings = _check_item_consistency(structure)
+        paging_errors = [f for f in findings if "use_paging" in f["message"]]
+        assert len(paging_errors) == 0
