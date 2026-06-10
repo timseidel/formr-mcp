@@ -4,7 +4,9 @@ import json
 import os
 import webbrowser
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import Annotated, AsyncIterator, Literal
+
+from pydantic import Field
 
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
@@ -32,6 +34,8 @@ from formr_mcp.utils import (
     validate_run_name,
 )
 from formr_mcp.validation import get_unit_type_schemas, validate_structure
+
+RunName = Annotated[str, Field(pattern=r"^[a-z][a-z0-9-]{2,254}$", min_length=3, max_length=255)]
 
 BASE_URL = os.getenv("FORMR_BASE_URL", "")
 CLIENT_ID = os.getenv("FORMR_CLIENT_ID", "")
@@ -99,7 +103,7 @@ async def whoami(ctx: Context = None) -> dict:
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-async def list_runs(name: str | None = None, ctx: Context = None) -> list[dict]:
+async def list_runs(name: RunName | None = None, ctx: Context = None) -> list[dict]:
     """List all runs. Optionally filter by exact name."""
     if name is not None:
         validate_run_name(name)
@@ -107,7 +111,7 @@ async def list_runs(name: str | None = None, ctx: Context = None) -> list[dict]:
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True, openWorldHint=False))
-async def create_run(name: str, ctx: Context = None) -> dict:
+async def create_run(name: RunName, ctx: Context = None) -> dict:
     """Create a new run. Name must start with a letter, contain only a-z, 0-9, hyphens, and be 3-255 chars.
 
     Returns the created run name and link on success. Requires `run:write` OAuth scope.
@@ -118,7 +122,7 @@ async def create_run(name: str, ctx: Context = None) -> dict:
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True, idempotentHint=False, openWorldHint=False))
-async def delete_run(name: str, ctx: Context = None) -> str:
+async def delete_run(name: RunName, ctx: Context = None) -> str:
     """Permanently delete a run and all its data.
     """
     validate_run_name(name)
@@ -127,14 +131,14 @@ async def delete_run(name: str, ctx: Context = None) -> str:
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-async def get_run(name: str, ctx: Context = None) -> dict:
+async def get_run(name: RunName, ctx: Context = None) -> dict:
     """Get a single run by exact name."""
     validate_run_name(name)
     return await _client(ctx).get_run(name)
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True, openWorldHint=False))
-async def update_run_settings(name: str, settings: dict, ctx: Context = None) -> dict:
+async def update_run_settings(name: RunName, settings: dict, ctx: Context = None) -> dict:
     """Update a run's settings. Pass only the settings you want to change.
 
     Common settings: title, description, public (0=admin/test-only, 2=link-accessible), locked (0/1),
@@ -164,7 +168,7 @@ def _format_size(bytes: int) -> str:
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-async def get_run_structure_to_file(name: str, ctx: Context = None) -> str:
+async def get_run_structure_to_file(name: RunName, ctx: Context = None) -> str:
     """Download the full run structure to .formr/<name>.json. Use this before editing.
 
     If the file already exists, the previous version is backed up to .formr/<name>.json.bak.
@@ -207,7 +211,7 @@ def _normalize_survey_choices(structure: dict) -> None:
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False, openWorldHint=False))
-async def update_run_structure_from_file(name: str, ctx: Context = None) -> str:
+async def update_run_structure_from_file(name: RunName, ctx: Context = None) -> str:
     """Read a run structure from .formr/<name>.json, validate, and upload to formr.
 
     Returns a summary on success, or validation errors to fix and retry.
@@ -220,7 +224,7 @@ async def update_run_structure_from_file(name: str, ctx: Context = None) -> str:
 
     if not filepath.exists():
         raise FileNotFoundError(
-            f"No local file for run '{name}'. "
+            f"No local file for run '{name}' at {filepath}. "
             f"Call get_run_structure_to_file(\"{name}\") first."
         )
 
@@ -253,8 +257,8 @@ def get_unit_types(ctx: Context = None) -> dict:
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-def get_documentation(topic: str, ctx: Context = None) -> str:
-    """Get formr design documentation. Topics: item-types, run-concepts, r-code, survey-json, examples, best-practices. Use this to learn how to design formr surveys and runs."""
+def get_documentation(topic: Literal["item-types", "run-concepts", "r-code", "survey-json", "examples", "best-practices", "editing-tools", "unit-types-advanced"], ctx: Context = None) -> str:
+    """Get formr design documentation. Use this to learn how to design formr surveys and runs."""
     return doc.get_documentation(topic)
 
 
@@ -265,7 +269,7 @@ def get_documentation_topics(ctx: Context = None) -> list[dict]:
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-def summarize_run(name: str, detail: str = "items", ctx: Context = None) -> str:
+def summarize_run(name: RunName, detail: Literal["units", "items"] = "items", ctx: Context = None) -> str:
     """Summarize a run structure from the local file. Returns a readable overview of units and their items.
 
     Must call get_run_structure_to_file(name) first to fetch the structure.
@@ -278,7 +282,7 @@ def summarize_run(name: str, detail: str = "items", ctx: Context = None) -> str:
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-def find_run_items(name: str, query: str | None = None, item_type: str | None = None, ctx: Context = None) -> str:
+def find_run_items(name: RunName, query: str | None = None, item_type: str | None = None, ctx: Context = None) -> str:
     """Search for items across all surveys in a run. Returns matching items with survey context.
 
     Must call get_run_structure_to_file(name) first to fetch the structure.
@@ -293,7 +297,7 @@ def find_run_items(name: str, query: str | None = None, item_type: str | None = 
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-def analyze_run(name: str, ctx: Context = None) -> str:
+def analyze_run(name: RunName, ctx: Context = None) -> str:
     """Analyze a run structure for errors and warnings. Checks R syntax, variable references, branch flow, item consistency, and common mistakes.
 
     Must call get_run_structure_to_file(name) first to fetch the structure.
@@ -305,11 +309,12 @@ def analyze_run(name: str, ctx: Context = None) -> str:
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False, openWorldHint=False))
-def add_run_unit(name: str, unit_type: str, position: int, description: str = "",
-                insert_mode: str = "shift", ctx: Context = None, **kwargs) -> str:
+def add_run_unit(name: RunName, unit_type: str, position: int, description: str = "",
+                insert_mode: Literal["shift", "overwrite"] = "shift",
+                unit_fields: dict | None = None, ctx: Context = None) -> str:
     """Add a unit to a local run structure file. The file must exist (fetch with get_run_structure_to_file first).
 
-    Kwargs by unit type (see get_unit_types() for full schema):
+    unit_fields — unit-type-specific fields (see get_unit_types() for full schema):
       Branch/SkipForward/SkipBackward: condition (R expr), if_true (int position)
       Email: subject, body, account_id (int), recipient_field
       Survey: study_id (int) or survey_data (dict)
@@ -322,11 +327,11 @@ def add_run_unit(name: str, unit_type: str, position: int, description: str = ""
     """
     validate_run_name(name)
     return editing_add_run_unit(name, unit_type, position, description=description,
-                               insert_mode=insert_mode, **kwargs)
+                               insert_mode=insert_mode, **(unit_fields or {}))
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True, idempotentHint=False, openWorldHint=False))
-def remove_run_unit(name: str, position: int, compact: bool = False, ctx: Context = None) -> str:
+def remove_run_unit(name: RunName, position: int, compact: bool = False, ctx: Context = None) -> str:
     """Remove a unit at the given position from the local run structure file.
 
     The file must exist (fetch with get_run_structure_to_file first).
@@ -338,7 +343,7 @@ def remove_run_unit(name: str, position: int, compact: bool = False, ctx: Contex
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False, openWorldHint=False))
-def duplicate_run_units(name: str, from_positions: list[int], to_start_position: int,
+def duplicate_run_units(name: RunName, from_positions: list[int], to_start_position: int,
                         shift_existing: bool = True, ctx: Context = None) -> str:
     """Copy units at from_positions to new positions starting at to_start_position in the local run structure file.
 
@@ -352,7 +357,7 @@ def duplicate_run_units(name: str, from_positions: list[int], to_start_position:
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False, openWorldHint=False))
-def shift_run_positions(name: str, from_position: int, delta: int, ctx: Context = None) -> str:
+def shift_run_positions(name: RunName, from_position: int, delta: int, ctx: Context = None) -> str:
     """Shift all units at positions >= from_position by delta in the local run structure file.
 
     Positive delta shifts up (making room), negative shifts down (closing gaps).
@@ -363,7 +368,7 @@ def shift_run_positions(name: str, from_position: int, delta: int, ctx: Context 
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False, openWorldHint=False))
-def renormalize_positions(name: str, spacing: int = 10, ctx: Context = None) -> str:
+def renormalize_positions(name: RunName, spacing: Annotated[int, Field(ge=1)] = 10, ctx: Context = None) -> str:
     """Renumber all unit positions to clean multiples of spacing while preserving order.
 
     Safe to call on already-clean structures. Position references are automatically remapped.
@@ -374,8 +379,8 @@ def renormalize_positions(name: str, spacing: int = 10, ctx: Context = None) -> 
     return editing_renormalize_positions(name, spacing=spacing)
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=True, idempotentHint=False, openWorldHint=True))
-async def open_flowchart(name: str, ctx: Context = None) -> str:
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False, openWorldHint=True))
+async def open_flowchart(name: RunName, ctx: Context = None) -> str:
     """Open a flowchart visualization of a run in the browser.
 
     Uploads the local run structure to the formr Flowchart Generator (an external
