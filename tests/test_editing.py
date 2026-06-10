@@ -18,7 +18,7 @@ from formr_mcp.editing import (
     renormalize_positions,
     shift_run_positions,
 )
-from formr_mcp.utils import WORKSPACE_DIR
+from formr_mcp.utils import WORKSPACE_DIR, load_structure
 
 
 @pytest.fixture
@@ -586,3 +586,20 @@ class TestRenormalizePositions:
         assert positions == [10, 20, 30]
         skip = next(u for u in structure["units"] if u["type"] == "SkipForward")
         assert skip["if_true"] == 30
+
+
+class TestWorkspaceDir:
+    def test_error_message_includes_absolute_path(self, run_file):
+        with pytest.raises(FileNotFoundError, match=r"/.+\.json"):
+            load_structure("does-not-exist")
+
+    def test_workspace_dir_env_override(self, tmp_path, monkeypatch):
+        alt = tmp_path / "alt-workspace"
+        alt.mkdir()
+        monkeypatch.setenv("FORMR_WORKSPACE_DIR", str(alt))
+        monkeypatch.setattr("formr_mcp.utils.WORKSPACE_DIR", alt)
+        (alt / "test-run.json").write_text(
+            '{"name":"test-run","units":[],"settings":{}}', encoding="utf-8"
+        )
+        result = load_structure("test-run")
+        assert result["name"] == "test-run"

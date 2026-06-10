@@ -1585,6 +1585,19 @@ Each Survey unit defines its items inline as JSON objects.
 def _editing_tools():
     return r"""# Editing Tools for Run Structures
 
+## Workspace Directory
+
+The MCP stores all run structure files in a `.formr/` directory. By default this
+is relative to the MCP server's working directory at startup, which varies by
+client (Claude Code, Cursor, OpenCode each launch from a different CWD). To pin
+it to a known absolute location, set `FORMR_WORKSPACE_DIR` in the `.env` file
+next to `server.py`:
+
+    FORMR_WORKSPACE_DIR=/absolute/path/to/your/project/.formr
+
+All tool messages (fetch, save, error) include the absolute path so you always
+know exactly where files are being read from and written to.
+
 ## Core Workflow: Fetch → Edit → Upload
 
 Always use the file-based workflow. Do NOT pass large JSON structures through tool call arguments.

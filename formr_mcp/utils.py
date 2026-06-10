@@ -6,11 +6,13 @@ These are used across server.py, editing.py, analysis.py, and summarize.py.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 from pathlib import Path
 
-WORKSPACE_DIR = Path(".formr")
+_env_workspace = os.environ.get("FORMR_WORKSPACE_DIR")
+WORKSPACE_DIR = Path(_env_workspace) if _env_workspace else Path(".formr")
 
 VALID_NAME = re.compile(r"^[a-z][a-z0-9-]{2,254}$")
 
@@ -57,7 +59,7 @@ def load_structure(name: str) -> dict:
     filepath = safe_run_filepath(name)
     if not filepath.exists():
         raise FileNotFoundError(
-            f"No local file for run '{name}'. "
+            f"No local file for run '{name}' at {filepath}. "
             f"Call get_run_structure_to_file(\"{name}\") first."
         )
     with open(filepath, encoding="utf-8") as f:

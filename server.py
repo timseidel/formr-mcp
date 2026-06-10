@@ -11,6 +11,10 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.server import Context
 from mcp.types import ToolAnnotations
 
+# Load .env before importing project modules — they read env vars at import time
+dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+load_dotenv(dotenv_path)
+
 from formr_mcp.auth import AuthError, check_credentials
 from formr_mcp.client import FormrClient, FormrClientError
 from formr_mcp import documentation as doc
@@ -28,9 +32,6 @@ from formr_mcp.utils import (
     validate_run_name,
 )
 from formr_mcp.validation import get_unit_type_schemas, validate_structure
-
-dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-load_dotenv(dotenv_path)
 
 BASE_URL = os.getenv("FORMR_BASE_URL", "")
 CLIENT_ID = os.getenv("FORMR_CLIENT_ID", "")
