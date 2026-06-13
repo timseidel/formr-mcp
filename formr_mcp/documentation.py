@@ -1,3 +1,5 @@
+import re
+
 _TOPICS = {}
 
 
@@ -8,6 +10,27 @@ def _topic(name: str, title: str):
     return deco
 
 
+def _slugify(heading: str) -> str:
+    s = heading.replace("/", "-").lower()
+    s = re.sub(r"[^a-z0-9\s-]", "", s)
+    s = re.sub(r"\s+", "-", s.strip())
+    return re.sub(r"-+", "-", s)
+
+
+def _parse_sections(markdown: str) -> list[dict]:
+    lines = markdown.splitlines()
+    sections: list[dict] = []
+    for i, line in enumerate(lines):
+        if line.startswith("## "):
+            title = line[3:].strip()
+            if sections:
+                sections[-1]["end"] = i
+            sections.append({"name": _slugify(title), "title": title, "start": i, "end": None})
+    if sections:
+        sections[-1]["end"] = len(lines)
+    return sections
+
+
 def get_topics() -> list[dict]:
     return [
         {"name": k, "title": v["title"]}
@@ -15,14 +38,31 @@ def get_topics() -> list[dict]:
     ]
 
 
-def get_documentation(topic: str) -> str:
+def get_sections(topic: str) -> list[dict]:
+    """List available H2 sections within a topic."""
     entry = _TOPICS.get(topic)
     if not entry:
         available = ", ".join(_TOPICS)
-        raise ValueError(
-            f"Unknown topic '{topic}'. Available: {available}"
-        )
-    return entry["get"]()
+        raise ValueError(f"Unknown topic '{topic}'. Available: {available}")
+    sections = _parse_sections(entry["get"]())
+    return [{"name": s["name"], "title": s["title"]} for s in sections]
+
+
+def get_documentation(topic: str, section: str | None = None) -> str:
+    entry = _TOPICS.get(topic)
+    if not entry:
+        available = ", ".join(_TOPICS)
+        raise ValueError(f"Unknown topic '{topic}'. Available: {available}")
+    markdown = entry["get"]()
+    if section is None:
+        return markdown
+    sections = _parse_sections(markdown)
+    lines = markdown.splitlines()
+    for s in sections:
+        if s["name"] == section:
+            return "\n".join(lines[s["start"]:s["end"]])
+    available = ", ".join(s["name"] for s in sections)
+    raise ValueError(f"Unknown section '{section}' in topic '{topic}'. Available: {available}")
 
 
 # ── Item types ──────────────────────────────────────────────────────

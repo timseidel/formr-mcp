@@ -273,15 +273,32 @@ def get_unit_types(ctx: Context = None) -> dict:
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-def get_documentation(topic: Literal["item-types", "run-concepts", "r-code", "survey-json", "examples", "best-practices", "editing-tools", "unit-types-advanced", "data-access"], ctx: Context = None) -> str:
-    """Get formr design documentation. Use this to learn how to design formr surveys and runs."""
-    return doc.get_documentation(topic)
+def get_documentation(
+    topic: Literal["item-types", "run-concepts", "r-code", "survey-json", "examples", "best-practices", "editing-tools", "unit-types-advanced", "data-access"],
+    section: str | None = None,
+    ctx: Context = None,
+) -> str:
+    """Get formr design documentation. Call get_documentation_sections(topic) first to list
+    available section names, then pass section= to retrieve just that H2 block.
+    Omit section to get the full topic."""
+    return doc.get_documentation(topic, section)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 def get_documentation_topics(ctx: Context = None) -> list[dict]:
     """List all available documentation topics."""
     return doc.get_topics()
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+def get_documentation_sections(
+    topic: Literal["item-types", "run-concepts", "r-code", "survey-json", "examples", "best-practices", "editing-tools", "unit-types-advanced", "data-access"],
+    ctx: Context = None,
+) -> list[dict]:
+    """List the H2 sections available within a documentation topic.
+    Use this before get_documentation to find the specific section you need,
+    then pass its name as the section argument."""
+    return doc.get_sections(topic)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
