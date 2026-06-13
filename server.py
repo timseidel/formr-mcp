@@ -20,6 +20,7 @@ load_dotenv(dotenv_path)
 from formr_mcp.auth import AuthError, check_credentials
 from formr_mcp.client import FormrClient, FormrClientError
 from formr_mcp import documentation as doc
+from formr_mcp import patterns as patterns_lib
 from formr_mcp.analysis import analyze_run as run_analysis
 from formr_mcp.editing import (
     add_run_unit as editing_add_run_unit,
@@ -90,6 +91,12 @@ WORKFLOW — Always use the file-based workflow for run structures:
   2. Edit:   Use Read/Edit tools on .formr/<name>.json
   3. Upload: update_run_structure_from_file(name) → validates and uploads
 
+PATTERNS — For complex runs (condition/covariate balancing, waiting rooms, loading screens,
+live aggregate feedback, adaptive loops, personalized emails, external API/SMS calls, DRY R
+functions), call list_patterns() then get_pattern(name) to learn the proven approach (structure
++ R idioms + gotchas) instead of re-deriving it. Patterns inform; you build the units. See
+get_documentation("patterns") and get_documentation("custom-r-and-secrets").
+
 DATA ACCESS — survey_unit_sessions / survey data frames = current participant only.
 For all-participant data: formr_api_authenticate() with NO ARGUMENTS works in ALL run
 R contexts (conditions, item values/showif, labels, page/email bodies, External units)
@@ -152,6 +159,11 @@ async def update_run_settings(name: RunName, settings: dict, ctx: Context = None
     Common settings: title, description, public (0=admin/test-only, 2=link-accessible), locked (0/1),
     custom_css, custom_js, custom_r, cron_active, expiresOn, footer_text, public_blurb, privacy,
     tos, header_image_path, expire_cookie_value, expire_cookie_unit.
+
+    custom_r holds run-level R functions/globals injected before every R evaluation — define
+    repeating helpers here once and call them by name across units (DRY). See
+    get_documentation("custom-r-and-secrets"). Note: secret VALUES are write-only and set in the
+    admin UI, not here; the structure export lists their names under settings.secrets.
 
     Returns the full updated run with all settings.
     """
@@ -274,7 +286,7 @@ def get_unit_types(ctx: Context = None) -> dict:
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 def get_documentation(
-    topic: Literal["item-types", "run-concepts", "r-code", "survey-json", "examples", "best-practices", "editing-tools", "unit-types-advanced", "data-access"],
+    topic: Literal["item-types", "run-concepts", "r-code", "survey-json", "examples", "best-practices", "editing-tools", "unit-types-advanced", "data-access", "patterns", "custom-r-and-secrets"],
     section: str | None = None,
     ctx: Context = None,
 ) -> str:
@@ -292,13 +304,36 @@ def get_documentation_topics(ctx: Context = None) -> list[dict]:
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 def get_documentation_sections(
-    topic: Literal["item-types", "run-concepts", "r-code", "survey-json", "examples", "best-practices", "editing-tools", "unit-types-advanced", "data-access"],
+    topic: Literal["item-types", "run-concepts", "r-code", "survey-json", "examples", "best-practices", "editing-tools", "unit-types-advanced", "data-access", "patterns", "custom-r-and-secrets"],
     ctx: Context = None,
 ) -> list[dict]:
     """List the H2 sections available within a documentation topic.
     Use this before get_documentation to find the specific section you need,
     then pass its name as the section argument."""
     return doc.get_sections(topic)
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+def list_patterns(ctx: Context = None) -> list[dict]:
+    """List the available run-design patterns for complex runs.
+
+    Each entry has a name, a title, and the problem it solves. When a request matches one
+    (balancing/condition assignment, waiting rooms, loading screens, live aggregate feedback,
+    adaptive loops, personalized emails, external API/SMS calls, DRY R functions), call
+    get_pattern(name) to learn the approach instead of re-deriving it from scratch."""
+    return patterns_lib.list_patterns()
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+def get_pattern(name: str, ctx: Context = None) -> dict:
+    """Get a run-design pattern's approach: the problem it solves, when to use it, the
+    structure (which units/fields), how it works, the reusable R idioms (key_r), and gotchas.
+
+    Informational, not a copy-paste template — real runs differ too much for a fixed unit
+    blueprint. Read it, then build the units adapted to the run with add_run_unit / Edit,
+    reusing the key_r snippets and renaming to the run's real survey/item names. Finish with
+    analyze_run + update_run_structure_from_file. Call list_patterns() first to see names."""
+    return patterns_lib.get_pattern(name)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))

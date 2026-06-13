@@ -25,6 +25,9 @@ def _r_available() -> bool:
 
 # ── R expression extraction ──────────────────────────────────────────
 _DOLLAR_RE = re.compile(r"\b(\w+)\$(\w+R?)\b")
+# Local R assignments: `x <- ...`, `x = ...` (but not ==, <=, >=, !=). Used to tell
+# locally-built data frames (df, survey_results, past_data, ...) apart from survey references.
+_ASSIGN_RE = re.compile(r"\b(\w+)\s*(?:<-|(?<![=!<>])=(?!=))")
 _INLINE_R_RE = re.compile(r"`r\s+([^`]+)`")
 _R_CHUNK_RE = re.compile(r"```\\{r[^}]*}\\s*\n(.*?)```", re.DOTALL)
 
@@ -234,17 +237,29 @@ def _check_variable_references(structure: dict) -> list[dict]:
     builtin_tables = {
         "survey_unit_sessions", "survey_run_sessions", "survey_users",
         "externals", "shuffle",
+        # `.formr` system object (e.g. .formr$run_name); the regex drops the leading dot.
+        "formr",
     }
 
     FORMR_SYSTEM_COLUMNS = {"created", "modified", "ended", "expired"}
+
+    # Functions / globals defined in the run's custom_r store are injected before every R
+    # evaluation, so `name$...` where name comes from custom_r is not a survey reference.
+    custom_r = structure.get("settings", {}).get("custom_r") or ""
+    custom_r_names = {m.group(1) for m in _ASSIGN_RE.finditer(custom_r)}
 
     expressions = _extract_r_expressions(structure)
     seen_issues: set[tuple[str, str, str]] = set()
 
     for source in expressions:
+        # Variables assigned inside this expression are R locals (data frames, intermediates),
+        # not survey references — e.g. `df <- formr_api_fetch_results(...)` then `df$col`.
+        locals_here = {m.group(1) for m in _ASSIGN_RE.finditer(source["expr"])}
         refs = _extract_dollar_refs(source["expr"])
         for survey_name, var_name in refs:
             if survey_name in builtin_tables:
+                continue
+            if survey_name in locals_here or survey_name in custom_r_names:
                 continue
             if var_name in FORMR_SYSTEM_COLUMNS:
                 continue
@@ -496,7 +511,11 @@ def _check_common_mistakes(structure: dict) -> list[dict]:
 
         if utype in ("Branch", "SkipForward", "SkipBackward"):
             condition = unit.get("condition", "")
-            if condition and condition.strip():
+            # Skip multi-statement R conditions that use real assignment or define functions:
+            # their `=` signs are named arguments (e.g. tryCatch(error = function(e) ...)),
+            # not `=`-instead-of-`==` typos. This heuristic only targets simple conditions.
+            uses_real_r = "<-" in condition or "function(" in condition
+            if condition and condition.strip() and not uses_real_r:
                 m = _ASSIGNMENT_IN_CONDITION_RE.search(condition)
                 if m and "^" not in condition:
                     # The = sign is at m.end() - 1 (the match includes

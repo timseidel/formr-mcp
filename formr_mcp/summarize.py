@@ -64,6 +64,20 @@ def summarize_run_structure(
             public, f"level {public}"
         )
         lines.append(f"Visibility: {vis}")
+
+    # Run-level custom R helpers (DRY) and secret names — so callers know what's available
+    # before writing R that should reuse them.
+    custom_r = settings.get("custom_r") or ""
+    if custom_r.strip():
+        defined = re.findall(r"\b(\w+)\s*(?:<-|=)\s*function\b", custom_r)
+        if defined:
+            lines.append(f"custom_r functions: {', '.join(dict.fromkeys(defined))}")
+        else:
+            lines.append("custom_r: present (see settings.custom_r)")
+    secrets = settings.get("secrets") or []
+    if secrets:
+        names = ", ".join(f".formr$secret_{n}" for n in secrets)
+        lines.append(f"Secrets available in R: {names}")
     lines.append("")
 
     for unit in units:

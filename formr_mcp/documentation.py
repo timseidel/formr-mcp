@@ -2403,3 +2403,134 @@ diary    <- raw_list[["diary_survey"]]
 nrow(diary)
 ```
 """
+
+
+@_topic("patterns", "Recipe library for complex runs — use list_patterns / get_pattern")
+def _patterns():
+    return r"""# Pattern / recipe library
+
+Complex runs are compositions of a few recurring idioms. Rather than re-deriving them from
+scratch, consult a pattern mined from a real working run.
+
+**These patterns inform — they are not copy-paste templates.** Real deployments differ too much
+(survey names, study_ids, item lists, positions) for a fixed unit blueprint to drop in. Each
+pattern gives you the *approach*; you build the units adapted to the run with the editing tools.
+
+**Use the tools:**
+
+- `list_patterns()` — short catalog (name, title, problem it solves).
+- `get_pattern(name)` — the approach: problem, when_to_use, `structure` (which units/fields),
+  `how_it_works`, `key_r` (the portable R idioms), and `gotchas`.
+
+## Workflow
+
+1. `list_patterns()` to find a match for the request.
+2. `get_pattern("<name>")` to read the structure, the R idioms, and the gotchas.
+3. Build the units yourself (add_run_unit / Edit), reusing the `key_r` snippets and renaming to
+   the run's real survey/item names.
+4. `analyze_run` then `update_run_structure_from_file`.
+
+## Available patterns
+
+| Name | Solves |
+|------|--------|
+| `loading-screen` | Hide a slow calculate behind a "please wait" page so participants don't drop out |
+| `balanced-assignment` | Assign each participant to the smaller (completion-weighted) condition cell |
+| `covariate-balancing` | Balance conditions on continuous confounders via `balancr` + JSON state |
+| `waiting-room` | Hold participants at a position until an admin releases a batch (`session_action`) |
+| `live-aggregate-feedback` | Show live results from all respondents + majority-dependent content |
+| `adaptive-loop` | Iterate items until an estimate converges (adaptive/IRT testing) |
+| `personalized-email` | Email with inline-R greeting and a `{{login_link}}` resume link |
+| `external-api-dispatch` | Call a third-party API (e.g. SMS) from an External unit using run secrets |
+| `json-state-store` | Accumulate structured cross-participant state as JSON (append-only rows; resolve latest, races not lost writes) |
+| `dry-r-functions` | Factor repeating R into the run's `custom_r` store so units stay DRY |
+
+## Two conventions every pattern relies on
+
+- **`type_options` is a string**, never a raw int. On a `submit` item it means auto-submit:
+  `"1"` (~1 ms, used to create a page boundary), `"800"`/`"2000"` (ms delay, used for
+  polling), `"auto"` (submit as soon as a choice is made). On a `number` item it means
+  `"min,max,step"`. Same field, different meaning per item type.
+- **`formr_api_fetch_results(surveys = c(...), join = TRUE)` renames columns** to
+  `<item>_<survey>`. Reference the renamed columns in your R, and count only completed
+  participants when balancing.
+
+See also `custom-r-and-secrets` for the run-level R function store and encrypted secrets.
+"""
+
+
+@_topic("custom-r-and-secrets", "Run-level custom R functions (DRY) and encrypted secrets")
+def _custom_r_and_secrets():
+    return r"""# Custom R functions and secrets (run level)
+
+formr lets a run define shared R and encrypted secrets at the run level, both injected into
+every R evaluation context. They are the analogue of custom CSS/JS, and they let runs stay DRY
+and keep credentials out of the structure.
+
+Both live in the run **settings** (so they round-trip in the structure file under
+`settings.custom_r` and `settings.secrets`), and both are exposed by the v1 API.
+
+## Custom R functions (`custom_r`) — keep runs DRY
+
+Define named functions and global variables once. formr injects them **before every R
+evaluation**, so they are callable by name in `showif`, item `value`, branch `condition`,
+note labels, Page/Email bodies, and External code.
+
+- **The one hard rule:** a custom_r function **cannot see variables defined in inline R code**.
+  It only sees its own arguments and globals. So pass survey data in explicitly.
+- Edit it in the admin UI (Settings → R Functions) or via the MCP:
+  `update_run_settings(name, {"custom_r": "..."})`. It appears in the structure file as
+  `settings.custom_r`.
+
+```r
+# --- custom_r (defined once) ---
+is_done <- function(ended_col) {
+  !is.null(ended_col) && length(ended_col) > 0 && !all(is.na(ended_col))
+}
+
+# --- anywhere in the run (condition / value / showif / body) ---
+is_done(VIBE_SQ1_ready$ended)   # pass the column in; the function can't see it otherwise
+```
+
+**`formr_api_authenticate()` does NOT work in `custom_r`.** The
+auto-injected OAuth token (see `data-access`) is only available inside
+**unit-level** R evaluation contexts: branch conditions, item `value`/`showif`,
+labels, bodies, and External unit code. `custom_r` is sourced separately at
+run boot and does not go through the token-minting pipeline. If you need
+cross-participant data access, put `formr_api_authenticate()` in a
+`calculate` item's `value` instead — formr sees the call there and injects
+the token.
+
+Good candidates to factor out: the long `exists()/is.null()/length()/is.na()` guards that
+appear in many conditions, `safe_parse_json()` for JSON-state stores, phone-number
+normalisation for SMS, and scoring formulas reused across surveys. See the `dry-r-functions`
+pattern.
+
+## Run secrets — encrypted credentials
+
+Store API keys / gateway passwords as **encrypted, write-only** run secrets instead of
+hardcoding them in External units.
+
+- **Naming:** letters, digits, underscore (`[A-Za-z0-9_]+`), e.g. `api_key`.
+- **Access in R:** the literal form `.formr$secret_<name>` — a secret named `api_key` is
+  available as `.formr$secret_api_key`. Works in showif, value, label, body, condition, etc.
+- **Selective injection:** a secret is only sent to the R environment when your code
+  **literally contains** `.formr$secret_<name>`. Dynamic access like
+  `get(paste0(".formr$secret_", var))` will NOT trigger injection — always use the literal form.
+- **Write-only:** once saved the value is never shown again, and it is auto-redacted from
+  result logs (including escaped forms). Set/replace values in the admin UI (Settings →
+  Secrets).
+- **Round-trip:** the structure export lists secret **names** (not values) under
+  `settings.secrets`. Importing a structure with `secrets` names creates placeholder entries so
+  the admin knows which values to fill in; values themselves are never carried in the structure.
+
+```r
+# Read a gateway credential from a run secret (never hardcode it):
+httr::GET("https://gate.example.com/send", query = list(
+  id = .formr$secret_sms_id, pw = .formr$secret_sms_pw, msg = body))
+```
+
+**Not for the formr v1 API secret.** Cross-participant data access uses
+`formr_api_authenticate()` with no arguments — formr auto-injects a run-scoped token. Don't
+store the API secret here. See `data-access`.
+"""
