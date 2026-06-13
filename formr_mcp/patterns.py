@@ -207,7 +207,6 @@ _PATTERNS: list[dict] = [
         "title": "Loading screen for heavy R computation",
         "problem": "A heavy calculate item hangs a page on its GET request, so participants stare at a frozen browser and drop out.",
         "when_to_use": "Any time a calculate runs slow R (API calls, model fitting, balancing) and you want a 'please wait' message shown DURING the work.",
-        "source": "improvement_materials/loading-screen.json",
         "structure": (
             "One Survey split into two pages by a hidden auto-submit. Page 1: a 'please wait' note + a "
             "submit with class 'hidden' and type_options \"1\" (~1 ms auto-submit). Page 2: the heavy "
@@ -230,7 +229,6 @@ _PATTERNS: list[dict] = [
         "title": "Dynamic condition balancing (smaller cell wins)",
         "problem": "Assign each new participant to whichever experimental group currently has fewer COMPLETED sessions.",
         "when_to_use": "Between-subjects designs wanting roughly equal, completion-weighted cells without a fixed randomization list.",
-        "source": "improvement_materials/condition-balancing.json",
         "structure": (
             "A `group_selector` Survey whose `calculate` (named e.g. `group`) does the assignment behind a "
             "loading screen, then your real questionnaire Survey that shows the group via "
@@ -252,7 +250,6 @@ _PATTERNS: list[dict] = [
         "title": "Confounder balancing on continuous covariates",
         "problem": "Balance conditions across continuous confounders (age, weight, ...), not just equal cell counts.",
         "when_to_use": "Designs where pre-treatment covariates must be balanced between conditions (online covariate balancing / minimization).",
-        "source": "improvement_materials/confounder-balancing.json",
         "structure": (
             "A Survey collecting the covariate items, a submit (execution boundary), then a `calculate` "
             "(`bwd_result`) calling balancr::bwd_assign_next(). The assignment is shown by parsing the "
@@ -276,7 +273,6 @@ _PATTERNS: list[dict] = [
         "title": "Waiting room — synchronize participants",
         "problem": "Hold participants at a position until an admin (or a paired participant) releases a batch — e.g. dyadic/group studies, matchmaking.",
         "when_to_use": "Real-time coordination: park sessions at one position, then move them together with formr_api_session_action().",
-        "source": "improvement_materials/waiting-for-other-participants.json",
         "structure": (
             "A menu Survey (mc_button: wait / advance) + a SkipForward routing 'advance' to an admin panel. "
             "A waiting Survey whose hidden submit has type_options \"2000\" (auto-refresh every 2 s), followed "
@@ -299,7 +295,6 @@ _PATTERNS: list[dict] = [
         "title": "Live aggregate feedback (real-time results + conditional content)",
         "problem": "Show participants live aggregate results from all respondents and adapt content to the current majority.",
         "when_to_use": "Polls, wisdom-of-crowd demos, content that depends on what everyone else has answered so far.",
-        "source": "improvement_materials/live-adaptive-survey-logic-and-feedback.json",
         "structure": (
             "A Survey: the vote item + submit, a `calculate` (`item_max`) returning the current majority, a "
             "short auto-submit ('800') to the results page, notes carrying knitr chunks for a live table/plot, "
@@ -324,7 +319,6 @@ _PATTERNS: list[dict] = [
         "title": "Adaptive loop with a convergence stopping rule",
         "problem": "Administer items repeatedly, updating an estimate each round, and stop once it converges (adaptive/IRT testing).",
         "when_to_use": "Computerized adaptive testing, staircase procedures, any iterate-until-converged measurement.",
-        "source": "improvement_materials/IRT Design.json",
         "structure": (
             "A Survey that administers an item/block and updates the estimate (in a calculate or External). "
             "Then TWO control units: a SkipForward whose condition is the convergence check (exit to the end), "
@@ -346,7 +340,6 @@ _PATTERNS: list[dict] = [
         "title": "Personalized email with inline-R greeting and resume link",
         "problem": "Email a participant with a greeting adapted to their data and a personal link back into the run.",
         "when_to_use": "Welcome / invitation / reminder emails in longitudinal or multi-session studies.",
-        "source": "improvement_materials/vibe-main-run.json",
         "structure": (
             "An intake Survey collecting the address (+ any variable the greeting depends on), an optional "
             "SkipForward that skips the Email when the address is missing, then an Email whose body uses inline "
@@ -369,7 +362,6 @@ _PATTERNS: list[dict] = [
         "title": "Call an external API (e.g. SMS) from an External unit",
         "problem": "Trigger a third-party service — send an SMS, post to a webhook — as part of the run.",
         "when_to_use": "ESM/diary studies that text reminders, or any external HTTP integration.",
-        "source": "improvement_materials/vibe-main-run.json",
         "structure": (
             "A Survey collecting the input (e.g. a tel item), then an External unit whose `address` is R code "
             "(not an http URL) that calls the API with httr. api_end: 0 = fire-and-forget; 1 = wait for callback."
@@ -395,7 +387,6 @@ _PATTERNS: list[dict] = [
         "title": "Stateless JSON state store (handle concurrency carefully)",
         "problem": "You need to accumulate structured shared state across participants (a social network, a booking grid, a running tally of objects) but formr has no mutable run-level store.",
         "when_to_use": "Any growing, structured, cross-participant state: edges in a network, claimed slots, multi-field records that outlive a single survey.",
-        "source": "improvement_materials/unbound_network.json",
         "structure": (
             "Each session stores its record(s) as a JSON string in a calculate item (one, or a few like "
             "edge_1/edge_2/edge_3). Because formr appends a new DB row on every evaluation, these accumulate a "
@@ -436,7 +427,6 @@ _PATTERNS: list[dict] = [
         "title": "Share repeating R via custom_r (keep runs DRY)",
         "problem": "The same R (null/NA guards, JSON parsing, phone formatting, scoring) is copy-pasted into many conditions/calculates, so a fix means editing N places and each copy drifts.",
         "when_to_use": "Any run where ≥2 units share non-trivial R, or where a condition keeps re-deriving the same defensive scaffolding.",
-        "source": "improvement_materials/vibe-main-run.json",
         "structure": (
             "Define named functions and globals once in the run's custom_r store (Settings -> R Functions; the "
             "MCP setting `custom_r`). formr injects them before EVERY R evaluation, so they're callable by name "
@@ -494,7 +484,6 @@ def get_pattern(name: str) -> dict:
         "title": p["title"],
         "problem": p["problem"],
         "when_to_use": p["when_to_use"],
-        "source": p["source"],
         "structure": p["structure"],
         "how_it_works": p["how_it_works"],
         "key_r": p["key_r"],
