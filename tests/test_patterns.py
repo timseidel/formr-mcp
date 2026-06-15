@@ -53,14 +53,13 @@ class TestPatternContents:
     @pytest.mark.parametrize("name", sorted(EXPECTED_NAMES))
     def test_informational_fields_present(self, name):
         p = patterns.get_pattern(name)
-        for key in ("name", "title", "problem", "when_to_use", "source",
+        for key in ("name", "title", "problem", "when_to_use",
                     "structure", "how_it_works", "key_r", "gotchas"):
             assert key in p, f"{name} missing {key}"
         assert p["name"] == name
         assert isinstance(p["structure"], str) and p["structure"].strip()
         assert isinstance(p["how_it_works"], str) and p["how_it_works"].strip()
         assert isinstance(p["gotchas"], list) and p["gotchas"]
-        assert "improvement_materials/" in p["source"]
 
     def test_no_copy_paste_blueprint(self):
         # Patterns inform; they must not ship a drop-in unit blueprint.

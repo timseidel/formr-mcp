@@ -29,7 +29,7 @@ _DOLLAR_RE = re.compile(r"\b(\w+)\$(\w+R?)\b")
 # locally-built data frames (df, survey_results, past_data, ...) apart from survey references.
 _ASSIGN_RE = re.compile(r"\b(\w+)\s*(?:<-|(?<![=!<>])=(?!=))")
 _INLINE_R_RE = re.compile(r"`r\s+([^`]+)`")
-_R_CHUNK_RE = re.compile(r"```\\{r[^}]*}\\s*\n(.*?)```", re.DOTALL)
+_R_CHUNK_RE = re.compile(r"```\{r[^}]*}\s*\n(.*?)```", re.DOTALL)
 
 
 def _extract_r_expressions(structure: dict) -> list[dict]:
