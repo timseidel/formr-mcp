@@ -361,6 +361,30 @@ class TestEmailBodyRextraction:
         pause_r = [s for s in sources if s["type"] == "knitr_inline" and "Pause" in s["location"]]
         assert len(pause_r) >= 1
 
+    def test_extracts_knitr_chunk_in_page_body(self):
+        # Regression: a real ```{r} fenced chunk must be extracted, not just inline `r ...`.
+        body = "Results:\n\n```{r echo=FALSE}\nlibrary(dplyr)\ntally <- count(df, item)\n```\n"
+        structure = _make_structure([
+            {"type": "Survey", "position": 10, "description": "survey"},
+            {"type": "Endpage", "position": 20, "body": body},
+        ])
+        sources = _extract_r_expressions(structure)
+        chunks = [s for s in sources if s["type"] == "knitr_chunk"]
+        assert len(chunks) == 1
+        assert "tally <- count(df, item)" in chunks[0]["expr"]
+
+    def test_extracts_knitr_chunk_in_note_label(self):
+        items = [{
+            "type": "note",
+            "name": "live_table",
+            "label": "Live tally:\n\n```{r message=FALSE}\nknitr::kable(tally)\n```\n",
+        }]
+        structure = _make_structure([_make_survey("feedback", 10, items)])
+        sources = _extract_r_expressions(structure)
+        chunks = [s for s in sources if s["type"] == "knitr_chunk"]
+        assert len(chunks) == 1
+        assert "knitr::kable(tally)" in chunks[0]["expr"]
+
 
 class TestCustomPagingForbidden:
     def _make_survey_with_settings(self, name, pos, items, settings):
