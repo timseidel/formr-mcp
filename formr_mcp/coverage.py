@@ -77,6 +77,10 @@ class DeepResult:
     cross_run: list[dict] = field(default_factory=list)
     r_available: bool = True
     customr_error: str | None = None
+    # Per-case trace for visualization/debugging: one record per evaluated case.
+    trace: list[dict] = field(default_factory=list)
+    # (survey, item) -> equivalence-class labels sampled for that dynamic item.
+    domains: dict[tuple[str, str], list[str]] = field(default_factory=dict)
 
 
 def _add_system_columns(cols: dict[str, list], n_rows: int) -> None:
@@ -207,7 +211,9 @@ def deep_analyze(structure: dict) -> DeepResult:
         for (sname, iname) in sorted(refs):
             item = surveys[sname][iname]
             consts = cls.constants.get((sname, iname), set())
-            dims.append(((sname, iname), item_domain(item, consts)))
+            domain = item_domain(item, consts)
+            dims.append(((sname, iname), domain))
+            result.domains.setdefault((sname, iname), [s.label for s in domain])
 
         # Every survey named in the expression needs a frame with ALL its
         # (non-display) items as columns — formr's getRunData builds a column per
@@ -230,13 +236,16 @@ def deep_analyze(structure: dict) -> DeepResult:
         for ci, assignment in enumerate(_assignments(dims + row_dim, MAX_CASES_PER_EXPR)):
             assign_map = {k: s for k, s in assignment if k != "__rows__"}
             labels: list[str] = []
+            inputs_struct: list[dict] = []
             n_rows = 1
             for key, sample in assignment:
                 if key == "__rows__":
                     n_rows = sample.value
                     labels.append(sample.label)
+                    inputs_struct.append({"name": "rows", "label": sample.label, "value": sample.value})
                 else:
                     labels.append(f"{key[1]}={sample.label}")
+                    inputs_struct.append({"name": key[1], "label": sample.label, "value": sample.value})
             # Build a 1-row frame per referenced survey: varied items take the
             # assigned sample, the rest take a representative value.
             frames: dict[str, dict[str, list]] = {}
@@ -258,6 +267,9 @@ def deep_analyze(structure: dict) -> DeepResult:
             case_meta[cid] = {
                 "location": ref.location, "kind": ref.kind,
                 "inputs": ", ".join(labels) or "(no dynamic inputs)",
+                "inputs_struct": inputs_struct,
+                "expr": ref.expr, "survey": ref.survey, "item": ref.item,
+                "position": ref.position,
                 # A same-survey showif on a not-yet-answered item is expected
                 # (formr re-evaluates it client-side) → demote NA to info.
                 "cross_survey": any(s != ref.survey for (s, _) in refs),
@@ -284,11 +296,20 @@ def deep_analyze(structure: dict) -> DeepResult:
         elif status == "warn":
             # Same-survey showif returning NA is expected (re-evaluated client-side).
             if meta["kind"] == "showif" and "showif returns NA" in detail and not meta["cross_survey"]:
+                status = "info"
                 finding.infos.append(entry)
             else:
                 finding.warns.append(entry)
         else:
             finding.passed += 1
+
+        result.trace.append({
+            "location": meta["location"], "kind": meta["kind"], "expr": meta["expr"],
+            "survey": meta["survey"], "item": meta["item"], "position": meta["position"],
+            "inputs": meta["inputs_struct"], "status": status, "detail": detail,
+            "ok": r.ok, "value": r.value, "rclass": r.rclass,
+            "is_na": r.is_na, "length": r.length,
+        })
         if meta["kind"] == "condition" and r.ok and "logical" in r.rclass and not r.is_na:
             truth = branch_truth.setdefault(meta["location"], {})
             val = r.value.split(";")[0]

@@ -31,6 +31,7 @@ from formr_mcp.editing import (
 )
 from formr_mcp.summarize import find_items, summarize_run_structure
 from formr_mcp.utils import (
+    load_structure,
     run_filepath,
     validate_run_name,
 )
@@ -384,6 +385,38 @@ def analyze_run(name: RunName, deep: bool = False, ctx: Context = None) -> str:
     """
     validate_run_name(name)
     return run_analysis(name, deep=deep)
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True, openWorldHint=False))
+def visualize_analysis(name: RunName, ctx: Context = None) -> str:
+    """DIAGNOSTIC/DEV: visualize the deep analysis of a run as a local HTML page.
+
+    Runs the deterministic deep analysis and writes a self-contained HTML report
+    — a Mermaid flow diagram (branch nodes colored by coverage) plus full detail
+    tables: item static/dynamic map with sampled value domains, every tested input
+    combination per expression with its R result and status, per-branch TRUE/FALSE
+    decisions, loops, and cross-run synthesis — then opens it in the browser.
+
+    Fully local (no external service). Requires R for the simulated tables; without
+    R the structure + item map still render. Must call get_run_structure_to_file
+    first. Returns the file path.
+    """
+    validate_run_name(name)
+    structure = load_structure(name)
+
+    from formr_mcp.coverage import deep_analyze
+    from formr_mcp.visualize import render_html
+
+    result = deep_analyze(structure)
+    out_html = render_html(structure, result, structure.get("name", name))
+    out_path = run_filepath(name).with_suffix(".analysis.html")
+    out_path.write_text(out_html, encoding="utf-8")
+    webbrowser.open(f"file://{out_path}")
+
+    n_break = sum(1 for f in result.expr_findings if f.breaks)
+    return (f"Wrote deep-analysis visualization for '{name}' to:\n  {out_path}\n"
+            f"({len(result.trace)} cases simulated, {n_break} expression(s) with breaks). "
+            f"Opened in browser.")
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False, openWorldHint=False))

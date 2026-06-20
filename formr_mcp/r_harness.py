@@ -191,7 +191,10 @@ def _frame_code(name: str, columns: dict[str, list]) -> str:
 def _build_case_block(case: Case) -> str:
     frames = "\n".join(_frame_code(n, cols) for n, cols in case.frames.items()) or "    # no frames"
     frame_list = ", ".join(f"`{n}` = `{n}`" for n in case.frames)
-    expr_lit = json.dumps(case.expr)  # safe R-compatible double-quoted string
+    # Collapse newlines before embedding: R's parse(text=...) treats \n as real
+    # line breaks, so "}\nelse" on separate lines triggers "unexpected 'else'".
+    _expr = re.sub(r"\s*\r?\n\s*", " ", case.expr)
+    expr_lit = json.dumps(_expr)
     if case.current_survey:
         eval_expr = f"with(tail(`{case.current_survey}`, 1L), eval(parse(text={expr_lit})))"
     else:

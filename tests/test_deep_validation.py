@@ -161,6 +161,27 @@ class TestDeepAnalysis:
         assert res.loop_findings[0]["bounded"] is True
 
 
+    @R
+    def test_multiline_ifelse_no_parse_error(self):
+        # Expressions written across multiple lines in the survey editor arrive in JSON
+        # with literal \n characters. R's parse(text=...) treats those as real newlines,
+        # making "}\nelse" trigger "unexpected 'else'". The harness must flatten them.
+        expr = (
+            "if (isTRUE(x != 0)) {\n  1\n} else if (isTRUE(x == 0)) {\n  2\n} else {\n  3\n}"
+        )
+        structure = {"name": "t", "units": [
+            _survey("s", 10, [
+                {"type": "number", "name": "x", "type_options": "0,10"},
+                {"type": "calculate", "name": "r", "value": expr},
+            ]),
+        ]}
+        res = deep_analyze(structure)
+        val = [f for f in res.expr_findings if f.kind == "value" and "r" in f.location][0]
+        # Should produce no R runtime parse errors (NA/NA from x=NA is ok)
+        runtime_errors = [b for b in val.breaks if b.get("category") == "runtime"]
+        assert runtime_errors == [], f"Parse errors in multiline if-else: {runtime_errors}"
+
+
 # ── P2: error categorization ────────────────────────────────────────────
 
 class TestErrorCategorization:
