@@ -556,9 +556,146 @@ def _check_common_mistakes(structure: dict) -> list[dict]:
     return findings
 
 
+# ── Item quality checker ─────────────────────────────────────────────
+
+def _check_item_quality(structure: dict) -> list[dict]:
+    """Item-level quality issues that don't break the run but allow bad data —
+    e.g. number fields with no min/max so participants can enter out-of-range
+    values (the formr server does not impose a default range)."""
+    findings: list[dict] = []
+    for unit in structure.get("units", []):
+        if not isinstance(unit, dict) or unit.get("type") != "Survey":
+            continue
+        sd = unit.get("survey_data")
+        if not isinstance(sd, dict):
+            continue
+        sname = sd.get("name", "(unnamed)")
+        pos = unit.get("position", "?")
+        for item in sd.get("items", []):
+            if not isinstance(item, dict) or item.get("type") != "number":
+                continue
+            opts = item.get("type_options")
+            has_range = False
+            if isinstance(opts, dict):
+                has_range = opts.get("min") is not None or opts.get("max") is not None
+            elif isinstance(opts, str):
+                has_range = bool(re.search(r"\d", opts))
+            if not has_range:
+                findings.append({
+                    "severity": "warning",
+                    "message": f"Number item '{item.get('name')}' in survey '{sname}' has no "
+                               f"min/max in type_options — participants can enter negative or "
+                               f"out-of-range values. Set type_options like '0,120'.",
+                    "location": f"Survey '{sname}' at position {pos}, item '{item.get('name')}'",
+                })
+    return findings
+
+
+# ── Flow semantics checker ───────────────────────────────────────────
+
+_ALL_IDENT_RE = re.compile(r"[A-Za-z.][A-Za-z0-9_.]*")
+_COMPARISON_RE = re.compile(r"[<>]=?|==|!=|%in%")
+# Exclusion/eligibility signal in an item's name or label (EN + DE). Conditional
+# *content* (scenario variants etc.) is extremely common, so the gating-not-
+# enforced heuristic only fires when the item itself looks like a screen-out.
+_EXCLUSION_RE = re.compile(
+    r"ausschlu|ausgeschloss|exclu|ineligib|eligib|disqualif|screen.?out|"
+    r"nicht.{0,12}teilnehm|not.{0,12}eligible|abbruch",
+    re.IGNORECASE,
+)
+# shuffle$group is append-only: a Shuffle inside a loop appends a fresh group each
+# iteration. Reading tail/current/last = per-iteration randomization (intended);
+# reading the FIRST element while re-shuffling is contradictory (a real bug).
+_SHUFFLE_FIRST_RE = re.compile(
+    r"first\s*\(\s*shuffle\$group|head\s*\(\s*shuffle\$group|shuffle\$group\s*\[\s*1\s*\]"
+)
+_SHUFFLE_LATEST_RE = re.compile(r"(?:tail|current|last)\s*\(\s*shuffle\$group")
+
+
+def _check_flow_semantics(structure: dict) -> list[dict]:
+    """Cross-unit semantic checks: one-shot units re-run inside loops, and
+    gating showif conditions that no branch enforces."""
+    findings: list[dict] = []
+    units = [u for u in structure.get("units", []) if isinstance(u, dict)]
+
+    # All item names + items referenced by any branch condition.
+    all_items: set[str] = set()
+    for u in units:
+        if u.get("type") == "Survey" and isinstance(u.get("survey_data"), dict):
+            for it in u["survey_data"].get("items", []):
+                if isinstance(it, dict) and it.get("name"):
+                    all_items.add(it["name"])
+    branch_refs: set[str] = set()
+    for u in units:
+        if u.get("type") in ("Branch", "SkipForward", "SkipBackward"):
+            cond = u.get("condition") or ""
+            branch_refs |= {t for t in _ALL_IDENT_RE.findall(cond) if t in all_items}
+
+    # (b) A Shuffle inside a SkipBackward loop body re-shuffles every iteration.
+    # This is usually INTENTIONAL (per-iteration randomization: downstream reads
+    # tail(shuffle$group, 1)). Only flag the genuine contradiction — re-shuffling
+    # while downstream reads the FIRST assignment (first()/[1]/head), which the
+    # re-shuffle would silently override.
+    corpus = " ".join(e["expr"] for e in _extract_r_expressions(structure))
+    reads_first = bool(_SHUFFLE_FIRST_RE.search(corpus))
+    for u in units:
+        if u.get("type") != "SkipBackward":
+            continue
+        target, back = u.get("if_true"), u.get("position")
+        if not isinstance(target, int) or not isinstance(back, int):
+            continue
+        lo, hi = min(target, back), max(target, back)
+        for v in units:
+            if not (v.get("type") == "Shuffle" and isinstance(v.get("position"), int)
+                    and lo <= v["position"] <= hi):
+                continue
+            if reads_first:
+                findings.append({
+                    "severity": "warning",
+                    "message": f"Shuffle at position {v['position']} is inside the loop body of the "
+                               f"SkipBackward at position {back} (re-runs each iteration), but downstream "
+                               f"logic reads the FIRST shuffle result (first()/[1]/head). The re-shuffle "
+                               f"overrides that initial assignment — read tail(shuffle$group, 1) for "
+                               f"per-iteration randomization, or move the Shuffle before the loop entry.",
+                    "location": f"Shuffle at position {v['position']}",
+                })
+            # else: re-shuffle is the intended per-iteration randomization engine
+            # (downstream reads tail/current) — not a problem, emit nothing.
+
+    # (c) Heuristic: a display item gated by a comparison showif whose items no
+    # branch acts on — ineligible participants may not be routed out.
+    for u in units:
+        if u.get("type") != "Survey" or not isinstance(u.get("survey_data"), dict):
+            continue
+        sname = u["survey_data"].get("name", "(unnamed)")
+        pos = u.get("position", "?")
+        for it in u["survey_data"].get("items", []):
+            if not isinstance(it, dict) or it.get("type") not in ("note", "note_iframe", "block"):
+                continue
+            showif = (it.get("showif") or "").strip()
+            if not showif or not _COMPARISON_RE.search(showif):
+                continue
+            # High precision: only treat as an eligibility gate when the item's
+            # name or label actually signals exclusion/screen-out.
+            signal = f"{it.get('name', '')} {it.get('label', '')}"
+            if not _EXCLUSION_RE.search(signal):
+                continue
+            gated = {t for t in _ALL_IDENT_RE.findall(showif) if t in all_items}
+            if gated and not (gated & branch_refs):
+                findings.append({
+                    "severity": "warning",
+                    "message": f"Display item '{it.get('name')}' in survey '{sname}' is shown by a "
+                               f"condition on {sorted(gated)}, but no Branch/SkipForward acts on those "
+                               f"items — if this gates eligibility, ineligible participants are not "
+                               f"routed out (add a SkipForward to the endpage).",
+                    "location": f"Survey '{sname}' at position {pos}, item '{it.get('name')}'",
+                })
+    return findings
+
+
 # ── Main analysis function ───────────────────────────────────────────
 
-def analyze_run(name: str) -> str:
+def analyze_run(name: str, deep: bool = False) -> str:
     structure = load_structure(name)
     units = structure.get("units", [])
     run_name = structure.get("name", name)
@@ -569,19 +706,23 @@ def analyze_run(name: str) -> str:
     flow_findings = _check_branch_flow(structure)
     item_findings = _check_item_consistency(structure)
     mistake_findings = _check_common_mistakes(structure)
+    quality_findings = _check_item_quality(structure)
+    semantic_findings = _check_flow_semantics(structure)
 
-    total_errors = (
-        sum(1 for f in var_findings if f["severity"] == "error")
-        + sum(1 for f in flow_findings if f["severity"] == "error")
-        + sum(1 for f in item_findings if f["severity"] == "error")
-        + sum(1 for f in mistake_findings if f["severity"] == "error")
-    )
-    total_warnings = (
-        sum(1 for f in var_findings if f["severity"] == "warning")
-        + sum(1 for f in flow_findings if f["severity"] == "warning")
-        + sum(1 for f in item_findings if f["severity"] == "warning")
-        + sum(1 for f in mistake_findings if f["severity"] == "warning")
-    )
+    # Deep (deterministic simulation) pass — opt-in; imported lazily to avoid
+    # a module-load cycle (coverage → depgraph → analysis).
+    deep_lines: list[str] = []
+    deep_errors = deep_warnings = 0
+    if deep:
+        from formr_mcp.coverage import deep_analyze, render_report
+
+        deep_result = deep_analyze(structure)
+        deep_lines, deep_errors, deep_warnings = render_report(deep_result)
+
+    all_static = (var_findings + flow_findings + item_findings + mistake_findings
+                  + quality_findings + semantic_findings)
+    total_errors = sum(1 for f in all_static if f["severity"] == "error")
+    total_warnings = sum(1 for f in all_static if f["severity"] == "warning")
 
     # R syntax check
     r_errors = 0
@@ -592,8 +733,10 @@ def analyze_run(name: str) -> str:
 
     # Short result for clean runs
     r_validation_ok = _r_available() or not expressions
-    if total_errors == 0 and total_warnings == 0 and r_errors == 0 and r_validation_ok:
-        return f"✅ Run '{run_name}': no issues found (0 errors, 0 warnings)."
+    if (total_errors == 0 and total_warnings == 0 and r_errors == 0 and r_validation_ok
+            and deep_errors == 0 and deep_warnings == 0):
+        suffix = " (deep simulation passed)" if deep else ""
+        return f"✅ Run '{run_name}': no issues found (0 errors, 0 warnings){suffix}."
 
     lines: list[str] = []
     lines.append(f"Run '{run_name}' — Analysis Report")
@@ -676,9 +819,35 @@ def analyze_run(name: str) -> str:
             lines.append(f"  {icon} {f['message']}")
     lines.append("")
 
+    # 6. Item quality
+    lines.append("## Item Quality")
+    if not quality_findings:
+        lines.append("  ✅ No item quality issues detected.")
+    else:
+        for f in quality_findings:
+            lines.append(f"  ⚠ {f['message']}")
+    lines.append("")
+
+    # 7. Flow semantics
+    lines.append("## Flow Semantics")
+    if not semantic_findings:
+        lines.append("  ✅ No flow-semantic issues detected.")
+    else:
+        for f in semantic_findings:
+            lines.append(f"  ⚠ {f['message']}")
+    lines.append("")
+
+    # Deep simulation sections (only when requested)
+    if deep:
+        lines.extend(deep_lines)
+
     # Summary
     lines.append(f"{'=' * 60}")
-    lines.append(f"Summary: {r_errors} R syntax errors, {total_errors} errors, {total_warnings} warnings")
+    summary = (f"Summary: {r_errors} R syntax errors, "
+               f"{total_errors + deep_errors} errors, {total_warnings + deep_warnings} warnings")
+    if deep:
+        summary += f" (incl. {deep_errors} simulation breaks, {deep_warnings} simulation warnings)"
+    lines.append(summary)
     if not _r_available() and expressions:
         lines.append(f"  (R syntax validation was skipped — {len(expressions)} expressions unchecked)")
 

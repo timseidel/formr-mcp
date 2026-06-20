@@ -365,15 +365,25 @@ def find_run_items(name: RunName, query: str | None = None, item_type: str | Non
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-def analyze_run(name: RunName, ctx: Context = None) -> str:
+def analyze_run(name: RunName, deep: bool = False, ctx: Context = None) -> str:
     """Analyze a run structure for errors and warnings. Checks R syntax, variable references, branch flow, item consistency, and common mistakes.
 
     Must call get_run_structure_to_file(name) first to fetch the structure.
 
-    Returns a structured report with error/warning counts. R syntax validation requires R to be installed.
+    deep=True additionally runs a DETERMINISTIC SIMULATION: it classifies items
+    as static vs dynamic, models each dynamic item's value domain (equivalence
+    classes + boundary values + NA), and evaluates every condition / showif /
+    value / label locally in R across those inputs to find which inputs break the
+    run (NA-in-condition, length-0 / NA dynamic values, non-boolean conditions,
+    runtime errors), plus branch-path coverage and loop-termination checks.
+    Cross-run formr_api_* references are resolved from other runs' JSON in the
+    local workspace (fetch them with get_run_structure_to_file first; otherwise
+    they are flagged). deep=True requires R to be installed.
+
+    Returns a structured report with error/warning counts.
     """
     validate_run_name(name)
-    return run_analysis(name)
+    return run_analysis(name, deep=deep)
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False, openWorldHint=False))
