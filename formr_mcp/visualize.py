@@ -218,10 +218,15 @@ def render_html(structure: dict, result: DeepResult, run_name: str) -> str:
 
     # Loops
     if result.loop_findings:
-        p.append("<h2>Loops</h2><table><tr><th>Loop</th><th>Bounded?</th><th>Detail</th></tr>")
+        p.append("<h2>Loops</h2><table><tr><th>Loop</th><th>Bounded?</th>"
+                 "<th>Max Iters</th><th>Terminates</th><th>Detail</th></tr>")
         for lf in result.loop_findings:
+            max_iters = str(lf.get("max_iterations", "—")) if lf.get("max_iterations") is not None else "—"
+            term = str(lf.get("terminates_at", "—")) if lf.get("terminates_at") is not None else "—"
             p.append(f"<tr class='{'s-ok' if lf['bounded'] else 's-warn'}'><td>{_esc(lf['location'])}</td>"
-                     f"<td>{'yes' if lf['bounded'] else 'no'}</td><td>{_esc(lf['detail'])}</td></tr>")
+                     f"<td>{'yes' if lf['bounded'] else 'no'}</td>"
+                     f"<td>{max_iters}</td><td>{term}</td>"
+                     f"<td>{_esc(lf['detail'])}</td></tr>")
         p.append("</table>")
 
     # Cross-run

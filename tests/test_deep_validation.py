@@ -12,7 +12,7 @@ from formr_mcp.analysis import (
     _check_item_quality,
     analyze_run,
 )
-from formr_mcp.coverage import deep_analyze
+from formr_mcp.coverage import deep_analyze, _infer_loop_max, _find_loop_body, _simulate_loop, _DEFAULT_LOOP_MAX
 from formr_mcp.depgraph import api_targets, classify, referenced_items, build_survey_items, iter_expressions
 from formr_mcp.r_harness import Case, CaseResult, categorize_error, classify as classify_result, evaluate, r_available
 from formr_mcp.value_domains import comparison_constants, item_domain, parse_number_constraints
@@ -392,3 +392,141 @@ class TestAnalyzeRunIntegration:
         out = analyze_run("nor", deep=True)
         # Still produces a report (item map) and does not crash.
         assert "Item Map" in out
+
+
+# ── P5: loop iteration simulation ─────────────────────────────────────────
+
+class TestInferLoopMax:
+    def test_nrow_less_than(self):
+        assert _infer_loop_max("nrow(diary) < 14", {}) == 14
+
+    def test_nrow_less_equal(self):
+        assert _infer_loop_max("nrow(diary) <= 14", {}) == 14
+
+    def test_nrow_equals(self):
+        assert _infer_loop_max("nrow(survey) == 5", {}) == 6
+
+    def test_finished_greater_equal(self):
+        assert _infer_loop_max("finished(diary) >= 3", {}) == 3
+
+    def test_finished_greater(self):
+        assert _infer_loop_max("finished(diary) > 5", {}) == 6
+
+    def test_length_bound(self):
+        assert _infer_loop_max("length(diary$mood) < 10", {}) == 10
+
+    def test_counter_keyword_fallback(self):
+        # Contains 'iteration' but no parseable bound → uses default
+        result = _infer_loop_max("iteration <= some_var", {})
+        assert result == 30  # _DEFAULT_LOOP_MAX
+
+    def test_no_bound_returns_none(self):
+        assert _infer_loop_max("TRUE", {}) is None
+
+    def test_inequality_not_equal(self):
+        # nrow(X) != 5 has a counter keyword ('nrow') so it falls through to
+        # the default loop max — it's not definitively unbounded (the loop
+        # body might have an exit branch).
+        result = _infer_loop_max("nrow(diary) != 5", {})
+        assert result == _DEFAULT_LOOP_MAX  # falls through to default
+
+    def test_multiple_bounds_takes_min(self):
+        # nrow < 20 | finished >= 10 → min(20, 10) = 10
+        result = _infer_loop_max("nrow(diary) < 20 | finished(diary) >= 10", {})
+        assert result == 10
+
+
+class TestFindLoopBody:
+    def test_finds_survey_in_body(self):
+        structure = {"units": [
+            _survey("diary", 10, [{"type": "number", "name": "mood"}]),
+            {"type": "Pause", "position": 15, "wait_minutes": 60, "relative_to": "created"},
+            _branch("nrow(diary) < 14", 10, 20, utype="SkipBackward"),
+        ]}
+        body_units, body_surveys = _find_loop_body(
+            structure, structure["units"][2])
+        assert "diary" in body_surveys
+
+    def test_empty_body(self):
+        structure = {"units": [
+            _branch("nrow(s) < 5", 10, 20, utype="SkipBackward"),
+        ]}
+        body_units, body_surveys = _find_loop_body(
+            structure, structure["units"][0])
+        assert body_surveys == set()
+
+
+@R
+class TestLoopSimulation:
+    def test_nrow_loop_terminates(self):
+        """nrow(diary) < 3: loop should terminate when diary has 3 rows."""
+        structure = {"name": "t", "units": [
+            _survey("diary", 10, [{"type": "number", "name": "mood", "type_options": "1,7"}]),
+            _branch("nrow(diary) < 3", 10, 20, utype="SkipBackward"),
+        ]}
+        res = deep_analyze(structure)
+        loop = res.loop_findings[0]
+        assert loop["bounded"] is True
+        assert loop["terminates_at"] is not None
+        assert loop["terminates_at"] <= 3
+
+    def test_true_condition_unbounded(self):
+        """SkipBackward(TRUE) with no exit branch → unbounded."""
+        structure = {"name": "t", "units": [
+            _survey("s", 10, [{"type": "number", "name": "x"}]),
+            _branch("TRUE", 10, 20, utype="SkipBackward"),
+        ]}
+        res = deep_analyze(structure)
+        loop = res.loop_findings[0]
+        assert loop["bounded"] is False
+
+    def test_exit_branch_esm_idiom(self):
+        """SkipBackward(TRUE) with a date exit branch inside → ESM idiom (bounded)."""
+        structure = {"name": "t", "units": [
+            _survey("s", 10, [{"type": "number", "name": "mood"}]),
+            {"type": "Pause", "position": 15, "wait_minutes": 60, "relative_to": "created"},
+            _branch("as.numeric(Sys.time()) > 0", 40, 25),  # date exit inside loop body
+            _branch("TRUE", 10, 30, utype="SkipBackward"),
+            {"type": "Endpage", "position": 40},
+        ]}
+        res = deep_analyze(structure)
+        loop = res.loop_findings[0]
+        assert loop["bounded"] is True
+
+    def test_loop_bounds_override(self, tmp_path, monkeypatch):
+        """Explicit loop_bounds={position: max} overrides inference."""
+        structure = {"name": "lbtest", "units": [
+            _survey("s", 10, [{"type": "number", "name": "x"}]),
+            _branch("TRUE", 10, 20, utype="SkipBackward"),
+        ]}
+        monkeypatch.setattr(utils, "WORKSPACE_DIR", tmp_path)
+        (tmp_path / "lbtest.json").write_text(json.dumps(structure))
+        out = analyze_run("lbtest", deep=True, loop_bounds={20: 5})
+        # The loop should appear in the output with max_iterations=5
+        assert "max_iterations=5" in out
+
+    def test_finished_loop_terminates(self):
+        """finished(diary) >= 3: loop terminates after 3 completed iterations."""
+        structure = {"name": "t", "units": [
+            _survey("diary", 10, [{"type": "number", "name": "mood", "type_options": "1,7"}]),
+            _branch("finished(diary) >= 3", 40, 15),  # exit: move on after 3
+            _branch("TRUE", 10, 20, utype="SkipBackward"),
+            {"type": "Endpage", "position": 40},
+        ]}
+        res = deep_analyze(structure)
+        loop = res.loop_findings[0]
+        assert loop["bounded"] is True
+        # The exit branch should cause termination
+
+    def test_shorthand_current_in_condition(self):
+        """current(diary$mood) should work in loop conditions."""
+        structure = {"name": "t", "units": [
+            _survey("diary", 10, [{"type": "number", "name": "mood", "type_options": "1,7"}]),
+            _branch("current(diary$mood) > 3", 40, 15),  # early exit if mood > 3
+            _branch("nrow(diary) < 5", 10, 20, utype="SkipBackward"),
+            {"type": "Endpage", "position": 40},
+        ]}
+        res = deep_analyze(structure)
+        # Should not crash — current() is defined in preamble
+        loop = res.loop_findings[0]
+        assert loop["bounded"] is True

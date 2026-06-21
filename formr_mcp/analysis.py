@@ -695,7 +695,7 @@ def _check_flow_semantics(structure: dict) -> list[dict]:
 
 # ── Main analysis function ───────────────────────────────────────────
 
-def analyze_run(name: str, deep: bool = False) -> str:
+def analyze_run(name: str, deep: bool = False, loop_bounds: dict[int, int] | None = None) -> str:
     structure = load_structure(name)
     units = structure.get("units", [])
     run_name = structure.get("name", name)
@@ -716,7 +716,7 @@ def analyze_run(name: str, deep: bool = False) -> str:
     if deep:
         from formr_mcp.coverage import deep_analyze, render_report
 
-        deep_result = deep_analyze(structure)
+        deep_result = deep_analyze(structure, loop_bounds=loop_bounds)
         deep_lines, deep_errors, deep_warnings = render_report(deep_result)
 
     all_static = (var_findings + flow_findings + item_findings + mistake_findings

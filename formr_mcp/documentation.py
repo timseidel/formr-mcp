@@ -1770,7 +1770,7 @@ These tools read from the local `.formr/<name>.json` file (call `get_run_structu
 
 - **`summarize_run(name, detail)`** — human-readable overview. `detail="units"` for unit-level only, `detail="items"` (default) to include all survey items. Strips HTML from labels.
 - **`find_run_items(name, query?, item_type?)`** — search items by name/label substring and/or item type (e.g. `"mc"`, `"text"`, `"calculate"`).
-- **`analyze_run(name)`** — check for structural errors: R syntax validation, variable references, branch flow, Page/Endpage blocking, Wait body validation, item consistency, and common mistakes.
+- **`analyze_run(name, deep, loop_bounds)`** — check for structural errors: R syntax validation, variable references, branch flow, Page/Endpage blocking, Wait body validation, item consistency, and common mistakes. When `deep=True`, SkipBackward loops are simulated by growing data frames one row per iteration (mirroring formr's append-only model) and evaluating the condition at each step to determine if and when the loop terminates. If the condition contains a recognizable bound (e.g. `nrow(diary) < 14`), the max iteration count is inferred automatically. Otherwise, provide `loop_bounds={position: max_iterations}` (e.g. `{50: 14}` for a SkipBackward at position 50).
 - **`open_flowchart(name)`** — upload the local run structure to the formr Flowchart Generator and open an interactive flowchart in the browser. Returns a shareable URL (expires after 24 hours). Use this to show the user a quick, intuitive overview of what was built — position flow, branches, and unit types at a glance.
 
 ## Position Management

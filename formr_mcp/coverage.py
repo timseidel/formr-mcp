@@ -54,6 +54,7 @@ MAX_CASES_PER_EXPR = 60
 ROW_COUNTS = [0, 1, 3]  # aggregate dimension for cross-run frames
 _EVALUABLE = {"condition", "showif", "value", "relative_to", "knitr", "address"}
 _LOOP_COUNTER_RE = re.compile(r"\bnrow\b|\bn\(\)|\blength\b|\biteration\b|\bsum\b|\bcount\b")
+_DEFAULT_LOOP_MAX = 30  # fallback when a loop bound can't be inferred
 
 
 @dataclass
@@ -83,18 +84,308 @@ class DeepResult:
     domains: dict[tuple[str, str], list[str]] = field(default_factory=dict)
 
 
-def _add_system_columns(cols: dict[str, list], n_rows: int) -> None:
+def _add_system_columns(cols: dict[str, list], n_rows: int, *, all_ended: bool = False) -> None:
     """Every formr survey results frame carries these system timestamp columns —
-    add them so refs like `survey$created` resolve as POSIXct (not 'not found')."""
+    add them so refs like `survey$created` resolve as POSIXct (not 'not found').
+
+    When all_ended=True, the 'ended' column has real timestamps (completed
+    iterations in a loop), so `finished(survey)` counts them correctly.
+    When all_ended=False (default), 'ended' is NA (in-progress session)."""
     now = [RRaw("Sys.time()")] * n_rows
     na_time = [RRaw('as.POSIXct(NA, origin="1970-01-01")')] * n_rows
     cols.setdefault("created", list(now))
     cols.setdefault("modified", list(now))
-    cols.setdefault("ended", list(na_time))
+    cols.setdefault("ended", list(now) if all_ended else list(na_time))
     cols.setdefault("expired", list(na_time))
 
 
-# ── cross-run resolution (JSON only, recursive, bounded) ─────────────
+# ── loop iteration simulation ─────────────────────────────────────────
+#
+# formr's SkipBackward loops work by appending rows: each time a participant
+# completes a survey inside the loop, a new row is added to that survey's
+# data frame. The loop condition (e.g. `nrow(diary) < 14`) is evaluated
+# against this *growing* frame. To simulate this faithfully:
+#
+#   1. Start with 0 rows for loop-body surveys.
+#   2. At each iteration, add one row (with representative values + ended=timestamp).
+#   3. Evaluate the SkipBackward condition and any exit branches.
+#   4. If the condition returns FALSE, the loop terminates at that iteration.
+#   5. If we reach max_iterations, report as potentially unbounded.
+
+_NROW_BOUND_RE = re.compile(
+    r"nrow\s*\(\s*(\w+)\s*\)\s*(<=?|>=?|==|!=)\s*(\d+)"
+)
+_FINISHED_BOUND_RE = re.compile(
+    r"finished\s*\(\s*(\w+)\s*(?:,\s*\S+\s*)?\)\s*(>=?|<=?|==|!=)\s*(\d+)"
+)
+_LENGTH_BOUND_RE = re.compile(
+    r"length\s*\(\s*(\w+)\s*\$\s*(\w+)\s*\)\s*(<=?|>=?|==|!=)\s*(\d+)"
+)
+
+
+def _find_loop_body(structure: dict, skipback: dict) -> tuple[list[dict], set[str]]:
+    """Return (body_units, body_survey_names) for a SkipBackward loop.
+
+    The loop body is all units at positions between the jump-back target
+    (if_true) and the SkipBackward itself. Only Survey units contribute
+    survey names (for data frame construction).
+    """
+    target = skipback.get("if_true")
+    back_pos = skipback.get("position")
+    if not isinstance(target, int) or not isinstance(back_pos, int):
+        return [], set()
+    lo, hi = min(target, back_pos), max(target, back_pos)
+    body_units: list[dict] = []
+    body_surveys: set[str] = set()
+    for u in structure.get("units", []):
+        if not isinstance(u, dict) or u is skipback:
+            continue
+        pos = u.get("position")
+        if isinstance(pos, int) and lo <= pos <= hi:
+            body_units.append(u)
+            if u.get("type") == "Survey":
+                sname = (u.get("survey_data") or {}).get("name")
+                if sname:
+                    body_surveys.add(sname)
+    return body_units, body_surveys
+
+
+def _infer_loop_max(condition: str, surveys: dict[str, dict[str, dict]],
+                    body_surveys: set[str] | None = None) -> int | None:
+    """Extract a maximum iteration count from a loop condition expression.
+
+    Recognises common formr patterns:
+      nrow(X) < 14           → 15  (loop runs while rows < 14, terminates at row 14)
+      nrow(X) <= 14          → 14
+      finished(X) >= 5       → 5
+      finished(X) >= 3 | nrow(X) >= 3  → 3 (minimum bound)
+    """
+    bounds: list[int] = []
+
+    for m in _NROW_BOUND_RE.finditer(condition):
+        op, n = m.group(2), int(m.group(3))
+        if op in ("<", "<="):
+            bounds.append(n if op == "<" else n)
+        elif op in (">", ">="):
+            bounds.append(n + 1 if op == ">" else n)
+        elif op == "==":
+            bounds.append(n + 1)
+        elif op == "!=":
+            pass  # unbounded
+
+    for m in _FINISHED_BOUND_RE.finditer(condition):
+        op, n = m.group(2), int(m.group(3))
+        if op in (">=", ">"):
+            bounds.append(n + 1 if op == ">" else n)
+        elif op in ("<=", "<"):
+            # finished(diary) <= N is unusual but technically a bound
+            bounds.append(n if op == "<=" else n + 1)
+
+    for m in _LENGTH_BOUND_RE.finditer(condition):
+        op, n = m.group(3), int(m.group(4))
+        if op in ("<", "<="):
+            bounds.append(n if op == "<" else n)
+        elif op in (">", ">="):
+            bounds.append(n + 1 if op == ">" else n)
+
+    if bounds:
+        return min(bounds)
+
+    # Fallback: if a counter keyword is present, use default max
+    if _LOOP_COUNTER_RE.search(condition):
+        return _DEFAULT_LOOP_MAX
+
+    return None
+
+
+@dataclass
+class _LoopSimResult:
+    """Result of simulating a SkipBackward loop across iterations."""
+    terminates_at: int | None = None   # iteration where condition became FALSE (1-based)
+    iterations_tested: int = 0
+    condition_breaks: list[dict] = field(default_factory=list)   # R errors at specific iterations
+    detail: str = ""
+
+
+def _simulate_loop(
+    structure: dict,
+    skipback: dict,
+    max_iterations: int,
+    surveys: dict[str, dict[str, dict]],
+    cls: Classification,
+    custom_r: str = "",
+) -> _LoopSimResult:
+    """Simulate iterations of a SkipBackward loop to determine termination.
+
+    Builds data frames that grow by one row per iteration (mirroring formr's
+    append-only model) and evaluates the loop condition at each step.
+    """
+    if not r_available():
+        return _LoopSimResult(detail="R not available — cannot simulate loop iterations")
+
+    cond_expr = (skipback.get("condition") or "").strip()
+    if not cond_expr:
+        return _LoopSimResult(detail="empty condition — cannot simulate")
+
+    body_units, body_surveys = _find_loop_body(structure, skipback)
+    loc = f"SkipBackward condition at position {skipback.get('position', '?')}"
+
+    # Identify which surveys are referenced by the condition expression.
+    # formr only includes surveys whose names appear in the expression.
+    cond_refs = set()
+    for sname, var in _extract_dollar_refs(cond_expr):
+        if sname in surveys:
+            cond_refs.add(sname)
+    # Also check bare survey names (e.g., nrow(diary) without $ref)
+    for name in body_surveys:
+        if re.search(r'\b' + re.escape(name) + r'\b', cond_expr):
+            cond_refs.add(name)
+    _add_implicit_refs(cond_expr, surveys, cond_refs)
+
+    # Also check for exit branches inside the loop body
+    exit_branches = []
+    target = skipback.get("if_true")
+    back_pos = skipback.get("position")
+    lo = hi = 0
+    if isinstance(target, int) and isinstance(back_pos, int):
+        lo, hi = min(target, back_pos), max(target, back_pos)
+    for u in body_units:
+        if u.get("type") in ("Branch", "SkipForward") and u is not skipback:
+            exit_branches.append(u)
+
+    # Build Cases: one per iteration. At iteration i, body surveys have i rows
+    # (i completed iterations), all with ended=timestamp so finished() works.
+    cases: list[Case] = []
+    case_meta: list[dict] = []
+
+    for iteration in range(0, max_iterations + 1):
+        frames: dict[str, dict[str, list]] = {}
+
+        # Body surveys: grow to `iteration` rows (completed iterations)
+        for sname in body_surveys:
+            if sname not in surveys:
+                continue
+            cols: dict[str, list] = {}
+            for iname, item in surveys[sname].items():
+                if item.get("type") in DISPLAY_TYPES:
+                    continue
+                rep = _representative(item)
+                cols[iname] = [rep] * iteration
+            _add_system_columns(cols, iteration, all_ended=True)
+            frames[sname] = cols
+
+        # Non-body surveys referenced in the condition: use 1 row (standard frame)
+        for sname in cond_refs:
+            if sname in body_surveys or sname not in surveys:
+                continue
+            if sname in frames:
+                continue
+            cols: dict[str, list] = {}
+            for iname, item in surveys[sname].items():
+                if item.get("type") in DISPLAY_TYPES:
+                    continue
+                cols[iname] = [_representative(item)]
+            _add_system_columns(cols, 1)
+            frames[sname] = cols
+
+        cid = f"loop_{skipback.get('position', 'X')}_iter{iteration}"
+        # SkipBackward conditions use $ syntax (no attach/tail), per formr's Branch path
+        cases.append(Case(cid, cond_expr, "condition", frames, current_survey=None))
+        case_meta.append({
+            "iteration": iteration,
+            "loc": loc,
+        })
+
+        # Also evaluate exit branches at this iteration
+        for eb_idx, eb in enumerate(exit_branches):
+            eb_cond = (eb.get("condition") or "").strip()
+            if not eb_cond:
+                continue
+            eb_refs = set()
+            for s, _ in _extract_dollar_refs(eb_cond):
+                if s in surveys:
+                    eb_refs.add(s)
+            _add_implicit_refs(eb_cond, surveys, eb_refs)
+
+            # Build frames for exit branch (same body surveys + any extra refs)
+            eb_frames: dict[str, dict[str, list]] = {}
+            for sname in body_surveys | eb_refs:
+                if sname not in surveys or sname in eb_frames:
+                    continue
+                n = iteration if sname in body_surveys else 1
+                if n == 0:
+                    continue  # skip if survey has no rows and isn't in body
+                ecols: dict[str, list] = {}
+                for iname, item in surveys[sname].items():
+                    if item.get("type") in DISPLAY_TYPES:
+                        continue
+                    ecols[iname] = [_representative(item)] * n
+                _add_system_columns(ecols, n, all_ended=(sname in body_surveys))
+                eb_frames[sname] = ecols
+
+            if not eb_frames and iteration == 0:
+                # Even with 0 rows, some conditions like next_day() need no frames
+                pass
+            eb_cid = f"loop_{skipback.get('position', 'X')}_exit{eb_idx}_iter{iteration}"
+            cases.append(Case(eb_cid, eb_cond, "condition", eb_frames, current_survey=None))
+            case_meta.append({
+                "iteration": iteration,
+                "loc": f"exit branch at position {eb.get('position', '?')}",
+                "is_exit": True,
+            })
+
+    results = evaluate(cases, custom_r=custom_r)
+    if "__customr_error__" in results:
+        return _LoopSimResult(detail=f"custom_r error during loop simulation: {results['__customr_error__'].error}")
+
+    result = _LoopSimResult(iterations_tested=max_iterations + 1)
+    terminated = False
+
+    for meta, cid in zip(case_meta, [c.id for c in cases]):
+        r = results.get(cid)
+        is_exit = meta.get("is_exit", False)
+
+        if r is None:
+            continue
+
+        if is_exit:
+            # Exit branch: if TRUE, the loop exits here
+            if r.ok and "logical" in r.rclass and not r.is_na and r.value.startswith("TRUE"):
+                if result.terminates_at is None or meta["iteration"] < result.terminates_at:
+                    result.terminates_at = meta["iteration"]
+                    terminated = True
+            continue
+
+        # SkipBackward condition: if FALSE, loop terminates
+        if r.ok and "logical" in r.rclass and not r.is_na:
+            val = r.value.split(";")[0]
+            if val == "FALSE":
+                if result.terminates_at is None or meta["iteration"] < result.terminates_at:
+                    result.terminates_at = meta["iteration"]
+                    terminated = True
+            elif val == "TRUE" and not terminated:
+                # Condition still TRUE at this iteration, loop continues
+                pass
+        elif not r.ok and not is_exit:
+            result.condition_breaks.append({
+                "iteration": meta["iteration"],
+                "error": r.error or "unknown R error",
+            })
+
+    if terminated:
+        result.detail = f"terminates at iteration {result.terminates_at} of max {max_iterations}"
+    else:
+        result.detail = f"condition remained TRUE through {max_iterations} iterations — may loop forever"
+
+    return result
+
+
+def _add_implicit_refs(expr: str, surveys: dict[str, dict[str, dict]],
+                       refs: set[str]) -> None:
+    """Add survey names referenced implicitly (e.g. nrow(diary), finished(diary))."""
+    for sname in surveys:
+        if re.search(r'\b' + re.escape(sname) + r'\b', expr):
+            refs.add(sname)
 
 def _resolve_survey_items(
     name: str,
@@ -189,7 +480,7 @@ def _assignments(dims: list[tuple], cap: int):
 
 # ── main entry ────────────────────────────────────────────────────────
 
-def deep_analyze(structure: dict) -> DeepResult:
+def deep_analyze(structure: dict, loop_bounds: dict[int, int] | None = None) -> DeepResult:
     cls = classify(structure)
     surveys = build_survey_items(structure)
     result = DeepResult(classification=cls, r_available=r_available())
@@ -318,11 +609,24 @@ def deep_analyze(structure: dict) -> DeepResult:
             elif val == "FALSE":
                 truth["false"] = True
 
-    _branch_and_loop_coverage(structure, branch_truth, result)
+    _branch_and_loop_coverage(structure, branch_truth, result, surveys, cls, custom_r, loop_bounds)
     return result
 
 
-def _branch_and_loop_coverage(structure: dict, branch_truth: dict, result: DeepResult) -> None:
+def _branch_and_loop_coverage(
+    structure: dict,
+    branch_truth: dict,
+    result: DeepResult,
+    surveys: dict[str, dict[str, dict]] | None = None,
+    cls: Classification | None = None,
+    custom_r: str = "",
+    loop_bounds: dict[int, int] | None = None,
+) -> None:
+    if surveys is None:
+        surveys = {}
+    if loop_bounds is None:
+        loop_bounds = {}
+
     for unit in structure.get("units", []):
         if not isinstance(unit, dict):
             continue
@@ -357,17 +661,54 @@ def _branch_and_loop_coverage(structure: dict, branch_truth: dict, result: DeepR
 
         if utype == "SkipBackward":
             cond = unit.get("condition") or ""
-            bounded = bool(_LOOP_COUNTER_RE.search(cond))
-            if bounded:
-                detail = "loop bound references a counter (nrow/length/iteration/...) — verify it converges"
-            elif _loop_has_exit_branch(structure, unit):
-                bounded = True
-                detail = ("condition is always-true, but the loop body contains a date/count "
-                          "exit Branch (ESM idiom) — verify that exit can fire")
+            int_pos = pos if isinstance(pos, int) else None
+
+            # Determine max iterations: explicit override > inferred > heuristics
+            max_iter = loop_bounds.get(int_pos) if int_pos is not None else None
+            inferred = False
+            if max_iter is None:
+                max_iter = _infer_loop_max(cond, surveys)
+                inferred = True
+
+            has_exit = _loop_has_exit_branch(structure, unit)
+
+            if max_iter is not None:
+                # Simulate loop iterations
+                sim = _simulate_loop(structure, unit, max_iter, surveys, cls or Classification(), custom_r)
+                finding: dict = {
+                    "location": loc,
+                    "bounded": True,
+                    "max_iterations": max_iter,
+                    "terminates_at": sim.terminates_at,
+                    "iterations_tested": sim.iterations_tested,
+                    "detail": sim.detail,
+                }
+                if sim.condition_breaks:
+                    finding["condition_breaks"] = sim.condition_breaks
+                if inferred:
+                    finding["detail"] = f"(inferred max {max_iter}) {sim.detail}"
+            elif has_exit:
+                finding = {
+                    "location": loc,
+                    "bounded": True,
+                    "max_iterations": None,
+                    "terminates_at": None,
+                    "iterations_tested": 0,
+                    "detail": ("condition is always-true, but the loop body contains a date/count "
+                               "exit Branch (ESM idiom) — verify that exit can fire"),
+                }
             else:
-                detail = ("loop bound NOT statically determinable — ensure the condition can "
-                          "become FALSE or an exit branch leaves the loop, or it may loop forever")
-            result.loop_findings.append({"location": loc, "bounded": bounded, "detail": detail})
+                finding = {
+                    "location": loc,
+                    "bounded": False,
+                    "max_iterations": None,
+                    "terminates_at": None,
+                    "iterations_tested": 0,
+                    "detail": ("loop bound NOT statically determinable and no exit branch "
+                               "found — provide loop_bounds={position: max} or ensure the "
+                               "condition can become FALSE, or it may loop forever"),
+                }
+            result.loop_findings.append(finding)
 
 
 def _loop_has_exit_branch(structure: dict, skipback: dict) -> bool:
@@ -466,7 +807,14 @@ def render_report(result: DeepResult) -> tuple[list[str], int, int]:
             icon = "✅" if lf["bounded"] else "⚠"
             if not lf["bounded"]:
                 warnings += 1
-            lines.append(f"  {icon} {lf['location']}: {lf['detail']}")
+            detail = lf["detail"]
+            if lf.get("max_iterations") is not None:
+                detail = f"max_iterations={lf['max_iterations']}: {detail}"
+            if lf.get("terminates_at") is not None:
+                detail += f" (terminates at iteration {lf['terminates_at']})"
+            lines.append(f"  {icon} {lf['location']}: {detail}")
+            for cb in lf.get("condition_breaks", []):
+                lines.append(f"    ⚠ iteration {cb['iteration']}: {cb['error']}")
         lines.append("")
 
     # Cross-run references

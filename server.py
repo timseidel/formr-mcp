@@ -366,10 +366,12 @@ def find_run_items(name: RunName, query: str | None = None, item_type: str | Non
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-def analyze_run(name: RunName, deep: bool = False, ctx: Context = None) -> str:
+def analyze_run(name: RunName, deep: bool = False, loop_bounds: dict[int, int] | None = None, ctx: Context = None) -> str:
     """Analyze a run structure for errors and warnings. Checks R syntax, variable references, branch flow, item consistency, and common mistakes.
 
     Must call get_run_structure_to_file(name) first to fetch the structure.
+
+    Prefer offering the user a deep anaysis and vizualization ot it.
 
     deep=True additionally runs a DETERMINISTIC SIMULATION: it classifies items
     as static vs dynamic, models each dynamic item's value domain (equivalence
@@ -381,10 +383,19 @@ def analyze_run(name: RunName, deep: bool = False, ctx: Context = None) -> str:
     local workspace (fetch them with get_run_structure_to_file first; otherwise
     they are flagged). deep=True requires R to be installed.
 
+    When deep=True, SkipBackward loops are simulated by growing the loop-body
+    survey data frames by one row per iteration (mirroring formr's append-only
+    model). The loop condition is evaluated at each iteration to determine
+    termination. If the condition contains a recognisable bound (e.g.
+    nrow(diary) < 14), the max iteration count is inferred automatically.
+    Otherwise, provide loop_bounds={position: max_iterations} to set the max
+    iteration count for a SkipBackward at a given position (e.g. {50: 14} for
+    a SkipBackward at position 50 that should run at most 14 times).
+
     Returns a structured report with error/warning counts.
     """
     validate_run_name(name)
-    return run_analysis(name, deep=deep)
+    return run_analysis(name, deep=deep, loop_bounds=loop_bounds)
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True, openWorldHint=False))
@@ -417,6 +428,102 @@ def visualize_analysis(name: RunName, ctx: Context = None) -> str:
     return (f"Wrote deep-analysis visualization for '{name}' to:\n  {out_path}\n"
             f"({len(result.trace)} cases simulated, {n_break} expression(s) with breaks). "
             f"Opened in browser.")
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+def simulate_run(name: RunName, strategy: Literal["explore"] = "explore",
+                 max_sessions: Annotated[int, Field(ge=1, le=200)] = 50,
+                 loop_bounds: dict[int, int] | None = None, ctx: Context = None) -> str:
+    """Simulate participant walks through the run using BFS path exploration.
+
+    Unlike deep analysis (which evaluates each expression in isolation), the simulation
+    walks through the run like a real participant: accumulating state across surveys,
+    branching based on actual accumulated data, and storing all results in SQLite for
+    cross-session interaction analysis. This catches path-level bugs that isolated
+    evaluation misses (e.g. required items are never NA, showif-gated items only
+    appear when their condition is met).
+
+    Results are persisted in .formr/simulations.db and can be queried with
+    query_simulation. Must call get_run_structure_to_file(name) first.
+
+    strategy: 'explore' (BFS — explores all reachable branch paths by forking agents
+              at each decision point, up to max_sessions).
+    max_sessions: Maximum number of participant sessions to simulate (default 50).
+    loop_bounds: {position: max_iterations} for SkipBackward loops where the bound
+                 can't be inferred (same as analyze_run's loop_bounds).
+    """
+    validate_run_name(name)
+    from formr_mcp.simulation import simulate_run, render_simulation_report
+    result = simulate_run(name, strategy=strategy, max_sessions=max_sessions, loop_bounds=loop_bounds)
+    return render_simulation_report(result)
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+def query_simulation(name: RunName, query: Literal["breaks", "coverage", "sessions", "latest"] = "latest",
+                     simulation_id: str | None = None, ctx: Context = None) -> str:
+    """Query simulation results stored in the SQLite database.
+
+    query types:
+      'latest' — summary of the most recent simulation for this run (default)
+      'breaks' — all breaks found in a simulation
+      'coverage' — per-position reachability stats
+      'sessions' — list of sessions and their paths
+
+    Must call simulate_run first to populate the database.
+    """
+    validate_run_name(name)
+    from formr_mcp.simulation import simdb
+
+    simdb.init_db()
+
+    if simulation_id:
+        sim = simdb.query_simulation(simulation_id)
+        if not sim:
+            return f"No simulation found with id '{simulation_id}'"
+    else:
+        sims = simdb.list_simulations(run_name=name)
+        if not sims:
+            return f"No simulations found for run '{name}'. Run simulate_run first."
+        sim = sims[0]
+
+    sid = sim["id"]
+    lines = [f"Simulation {sid} (run: {sim['run_name']}, strategy: {sim['strategy']})"]
+    lines.append(f"  Status: {sim['status']}, sessions: {sim['sessions_completed']}, "
+                 f"breaks: {sim['breaks_count']}, warnings: {sim['warnings_count']}")
+    lines.append(f"  Created: {sim['created_at']}")
+    lines.append("")
+
+    if query == "breaks":
+        breaks = simdb.query_breaks(sid)
+        if not breaks:
+            lines.append("No breaks found.")
+        for b in breaks:
+            lines.append(f"  ❌ {b['location']}: {b['detail']}")
+    elif query == "coverage":
+        cov = simdb.query_path_coverage(sid)
+        if not cov:
+            lines.append("No path coverage data.")
+        for c in cov:
+            lines.append(f"  Position {c['position']}: reached={c['reached']} "
+                         f"T={c['branch_true']} F={c['branch_false']} NA={c['branch_na']}")
+    elif query == "sessions":
+        sessions = simdb.query_sessions(sid)
+        if not sessions:
+            lines.append("No sessions found.")
+        for s in sessions:
+            path = json.loads(s["path_json"]) if isinstance(s.get("path_json"), str) else s.get("path_json", [])
+            branches = json.loads(s["branch_decisions_json"]) if isinstance(s.get("branch_decisions_json"), str) else s.get("branch_decisions_json", {})
+            lines.append(f"  Session {s['sequence']} ({s['id'][:8]}…): path={path}, branches={branches}")
+    else:
+        cov = simdb.query_path_coverage(sid)
+        breaks = simdb.query_breaks(sid)
+        lines.append(f"Path coverage: {len(cov)} positions")
+        lines.append(f"Breaks: {len(breaks)}")
+        if breaks:
+            for b in breaks[:5]:
+                lines.append(f"  ❌ {b['location']}: {b['detail']}")
+
+    return "\n".join(lines)
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False, openWorldHint=False))

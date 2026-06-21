@@ -144,6 +144,13 @@ survey_run_sessions <- data.frame(created = .now, modified = .now,
 survey_users <- data.frame(created = .now, modified = .now, stringsAsFactors = FALSE)
 externals <- data.frame(created = .now, modified = .now, stringsAsFactors = FALSE)
 shuffle <- data.frame(group = 1L, unit = 1L, level = 1L, stringsAsFactors = FALSE)
+# formr shorthand functions (from formr R package shorthands.R)
+# current(x) = last element (current iteration's value in a loop data frame)
+current <- function(x) utils::tail(x, 1)
+first <- function(x, n = 1, na.rm = TRUE) { if (na.rm) x <- stats::na.omit(x); if (length(x) == 0) return(x); utils::head(x, n) }
+last <- function(x, n = 1, na.rm = TRUE) { if (na.rm) x <- stats::na.omit(x); if (length(x) == 0) return(x); utils::tail(x, n) }
+finished <- function(survey, variable = "ended") { if (length(survey) > 0 && length(survey[[variable]]) > 0) sum(!is.na(survey[[variable]])) else 0 }
+expired <- function(survey, variable = "expired") finished(survey, variable)
 """
 
 # Run custom_r so a missing package / broken line does not abort the whole script;
